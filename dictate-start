@@ -1,0 +1,142 @@
+#!/bin/bash
+#
+# Smart Dictation Starter
+# Detects keyboard layout using xkblayout-state and runs the appropriate engine.
+# English → VOSK, Arabic → Whisper (faster-whisper, much better accuracy).
+#
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NERD_DICTATION="$SCRIPT_DIR/nerd-dictation"
+STATE_FILE="$HOME/.dictate-state"
+MODEL_BASE="$HOME/.config/nerd-dictation"
+TIMEOUT=30
+
+# Parse arguments
+VERBOSE=false
+if [ "$1" = "--verbose" ] || [ "$1" = "-v" ]; then
+    VERBOSE=true
+    exec > >(tee /tmp/dictate-start.log) 2>&1
+    echo "=== Verbose mode enabled ==="
+fi
+
+# Ensure nerd-dictation exists
+if [ ! -f "$NERD_DICTATION" ]; then
+    zenity --error --title="Dictation Error" --text="nerd-dictation not found at:\n$NERD_DICTATION\n\nRun setup.sh to install."
+    exit 1
+fi
+
+# Check if already running
+if [ -f "$STATE_FILE" ]; then
+    PID=$(grep "^PID:" "$STATE_FILE" 2>/dev/null | cut -d: -f2)
+    if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+        zenity --info --title="Dictation" --text="Dictation is already running.\nPress your stop shortcut to stop first."
+        exit 1
+    else
+        rm -f "$STATE_FILE"
+    fi
+fi
+
+# Get current keyboard layout using xkblayout-state
+CURRENT_LAYOUT=$(xkblayout-state print "%s" 2>/dev/null | tr -d ' ')
+
+if [ -z "$CURRENT_LAYOUT" ]; then
+    zenity --error --title="Dictation Error" --text="Could not detect keyboard layout.\nIs xkblayout-state installed?"
+    exit 1
+fi
+
+# Auto-detect audio recording tool: prefer parec (PulseAudio/PipeWire-pulse),
+# fall back to pw-cat (native PipeWire), then sox.
+if command -v parec &>/dev/null; then
+    INPUT_METHOD="PAREC"
+elif command -v pw-cat &>/dev/null; then
+    INPUT_METHOD="PW-CAT"
+elif command -v sox &>/dev/null; then
+    INPUT_METHOD="SOX"
+else
+    zenity --error --title="Dictation Error" --text="No audio recording tool found.\n\nInstall one of:\n  sudo apt install pulseaudio-utils\n  sudo apt install pipewire-audio-client-libraries"
+    exit 1
+fi
+
+# Auto-detect GPU: use CUDA if nvidia-smi reports a GPU, otherwise CPU.
+if command -v nvidia-smi &>/dev/null && nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | grep -q .; then
+    WHISPER_DEVICE="cuda"
+else
+    WHISPER_DEVICE="cpu"
+fi
+
+# Map layout to engine and model settings
+USE_WHISPER=false
+case "$CURRENT_LAYOUT" in
+    us)
+        MODEL_DIR="$MODEL_BASE/model"
+        LANG_NAME="English"
+        LANG_CODE="us"
+        ;;
+    ara)
+        LANG_NAME="Arabic"
+        LANG_CODE="ara"
+        USE_WHISPER=true
+        WHISPER_MODEL="small"
+        WHISPER_LANG="ar"
+        WHISPER_TOOL="CLIPBOARD"
+        ;;
+    *)
+        zenity --error --title="Unsupported Layout" --text="Unsupported keyboard layout: $CURRENT_LAYOUT\n\nSupported layouts:\n• us (English)\n• ara (Arabic)"
+        notify-send "Dictation Failed" "Unsupported layout: $CURRENT_LAYOUT" --icon=dialog-error --app-name="nerd-dictation" 2>/dev/null
+        exit 1
+        ;;
+esac
+
+# For VOSK engine: check that the model directory exists
+if [ "$USE_WHISPER" = "false" ] && [ ! -d "$MODEL_DIR" ]; then
+    zenity --error --title="Model Not Found" --text="$LANG_NAME model not installed.\n\nPath: $MODEL_DIR\n\nDownload from:\nhttps://alphacephei.com/vosk/models"
+    notify-send "Dictation Failed" "$LANG_NAME model not found" --icon=dialog-error --app-name="nerd-dictation" 2>/dev/null
+    exit 1
+fi
+
+# Kill any orphaned dictation processes
+pkill -f "nerd-dictation begin" 2>/dev/null
+sleep 0.3
+
+# Start dictation
+if [ "$USE_WHISPER" = "true" ]; then
+    ENGINE="WHISPER"
+    # Logs go to /tmp/nerd-dictation-ar.log — check this file to debug Arabic issues
+    "$NERD_DICTATION" begin \
+        --engine WHISPER \
+        --whisper-model "$WHISPER_MODEL" \
+        --whisper-device "$WHISPER_DEVICE" \
+        --language "$WHISPER_LANG" \
+        --simulate-input-tool "$WHISPER_TOOL" \
+        --input "$INPUT_METHOD" \
+        --timeout=$TIMEOUT \
+        --verbose 1 >> /tmp/nerd-dictation-ar.log 2>&1 &
+else
+    ENGINE="VOSK"
+    "$NERD_DICTATION" begin \
+        --vosk-model-dir="$MODEL_DIR" \
+        --input "$INPUT_METHOD" \
+        --timeout=$TIMEOUT &
+fi
+PID=$!
+
+# Save state (ENGINE is read by dictate-stop to decide how long to wait)
+cat > "$STATE_FILE" << EOF
+PID:$PID
+LANG:$LANG_CODE
+LANG_NAME:$LANG_NAME
+ENGINE:$ENGINE
+TIME:$(date +%s)
+EOF
+
+# For Whisper: show a "loading" notification now.
+# A second "Dictation Ready" notification fires from Python once the model
+# is loaded and recording has actually started — wait for that before speaking.
+if [ "$USE_WHISPER" = "true" ]; then
+    notify-send "Dictation Loading" "Loading Arabic model, please wait..." --icon=microphone --app-name="nerd-dictation" 2>/dev/null || true
+else
+    notify-send "Dictation Started" "$LANG_NAME dictation is now listening..." --icon=microphone --app-name="nerd-dictation" 2>/dev/null || true
+fi
+
+echo "Started $LANG_NAME dictation (PID: $PID, engine: $ENGINE, input: $INPUT_METHOD, timeout: ${TIMEOUT}s)"
+exit 0

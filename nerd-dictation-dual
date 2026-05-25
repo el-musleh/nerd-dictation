@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""
+Dual-language VOSK dictation wrapper.
+Runs English and Arabic models and returns the result with highest confidence.
+"""
+import os
+import sys
+import subprocess
+from pathlib import Path
+
+MODELS = {
+    "en": str(Path.home() / ".config/nerd-dictation/model"),
+    "ar": str(Path.home() / ".config/nerd-dictation/model-ar"),
+}
+
+SCRIPT_DIR = Path(__file__).parent
+NERD_DICTATION = SCRIPT_DIR / "nerd-dictation"
+
+
+def run_dictation(model_path, timeout=8):
+    """Run nerd-dictation for a specific model and return the result."""
+    try:
+        cmd = [
+            str(NERD_DICTATION),
+            "begin",
+            "--vosk-model-dir", model_path,
+            "--output", "STDOUT",
+            "--timeout", str(timeout),
+            "--defer-output",
+        ]
+        
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout + 10,
+        )
+        
+        return result.stdout.strip()
+        
+    except subprocess.TimeoutExpired:
+        return ""
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return ""
+
+
+def main():
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Dual-language voice dictation")
+    parser.add_argument("--timeout", type=int, default=8, help="Seconds to wait for speech")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Show which model was used")
+    
+    args = parser.parse_args()
+    
+    results = {}
+    
+    for lang, model_path in MODELS.items():
+        if not os.path.exists(model_path):
+            print(f"Skipping {lang}: model not found", file=sys.stderr)
+            continue
+            
+        if args.verbose:
+            print(f"Testing {lang}...", file=sys.stderr, end=" ", flush=True)
+        
+        text = run_dictation(model_path, timeout=args.timeout)
+        word_count = len(text.split()) if text else 0
+        results[lang] = {"text": text, "words": word_count}
+        
+        if args.verbose:
+            print(f"{word_count} words", file=sys.stderr)
+    
+    if not results:
+        print("No models available!", file=sys.stderr)
+        sys.exit(1)
+    
+    best_lang = max(results, key=lambda k: results[k]["words"])
+    best_text = results[best_lang]["text"]
+    
+    if best_text:
+        if args.verbose:
+            print(f"Selected: {best_lang.upper()} ({results[best_lang]['words']} words)", file=sys.stderr)
+        print(best_text)
+    else:
+        print("No speech detected", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

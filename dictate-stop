@@ -1,0 +1,73 @@
+#!/bin/bash
+#
+# Smart Dictation Stopper
+# Reads state file and stops the active dictation.
+# For Whisper: signals end and waits for transcription to complete before exiting.
+#
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NERD_DICTATION="$SCRIPT_DIR/nerd-dictation"
+STATE_FILE="$HOME/.dictate-state"
+
+# Check if state file exists
+if [ ! -f "$STATE_FILE" ]; then
+    pkill -f "nerd-dictation begin" 2>/dev/null
+    zenity --info --title="Dictation" --text="No active dictation found."
+    exit 0
+fi
+
+# Read state
+LANG=$(grep "^LANG:" "$STATE_FILE" 2>/dev/null | cut -d: -f2)
+LANG_NAME=$(grep "^LANG_NAME:" "$STATE_FILE" 2>/dev/null | cut -d: -f2)
+PID=$(grep "^PID:" "$STATE_FILE" 2>/dev/null | cut -d: -f2)
+ENGINE=$(grep "^ENGINE:" "$STATE_FILE" 2>/dev/null | cut -d: -f2)
+# Default ENGINE to VOSK if not recorded (state file from older install)
+if [ -z "$ENGINE" ]; then
+    ENGINE="VOSK"
+fi
+
+if [ -z "$LANG" ]; then
+    rm -f "$STATE_FILE"
+    zenity --info --title="Dictation" --text="State file corrupted. Cleared."
+    exit 1
+fi
+
+# If LANG_NAME not in state file, map it
+if [ -z "$LANG_NAME" ]; then
+    case "$LANG" in
+        us) LANG_NAME="English" ;;
+        ara) LANG_NAME="Arabic" ;;
+        de) LANG_NAME="German" ;;
+        *) LANG_NAME="$LANG" ;;
+    esac
+fi
+
+# Signal the dictation process to stop recording and finalise.
+# For VOSK (progressive): text is already typed; this flushes any remaining words.
+# For Whisper (deferred): this triggers transcription — we must NOT kill the process yet.
+"$NERD_DICTATION" end 2>/dev/null
+
+# Wait for the process to finish naturally (critical for Whisper, harmless for VOSK).
+# Whisper transcribes after recording stops, so killing early would lose all output.
+if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+    WAIT_MAX=60   # Maximum half-seconds to wait (30 seconds total)
+    WAIT_COUNT=0
+    while kill -0 "$PID" 2>/dev/null && [ "$WAIT_COUNT" -lt "$WAIT_MAX" ]; do
+        sleep 0.5
+        WAIT_COUNT=$((WAIT_COUNT + 1))
+    done
+    # Force-kill only if it hasn't exited after the timeout
+    kill "$PID" 2>/dev/null
+fi
+
+# Clean up any stragglers
+pkill -f "nerd-dictation begin" 2>/dev/null
+
+# Clean up state file
+rm -f "$STATE_FILE"
+
+# Show notification
+notify-send "Dictation Stopped" "$LANG_NAME dictation complete." --icon=dialog-information --app-name="nerd-dictation" 2>/dev/null || true
+
+echo "Stopped $LANG_NAME dictation."
+exit 0

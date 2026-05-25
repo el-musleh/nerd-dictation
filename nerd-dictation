@@ -285,6 +285,53 @@ def simulate_typing_with_wtype(delete_prev_chars: int, text: str) -> None:
 
 
 # -----------------------------------------------------------------------------
+# Simulate Input: CLIPBOARD (xsel + smart paste key)
+# Use this for Arabic / RTL text that xdotool `type` cannot handle.
+# Automatically detects terminal emulators and uses Ctrl+Shift+V instead of Ctrl+V.
+#
+
+
+def _active_window_is_terminal() -> bool:
+    """Return True when the focused window is a terminal emulator."""
+    try:
+        win_id = subprocess.check_output(["xdotool", "getactivewindow"], text=True).strip()
+        wm_class = subprocess.check_output(
+            ["xprop", "-id", win_id, "WM_CLASS"], text=True
+        ).lower()
+        terminal_names = ("terminal", "xterm", "konsole", "rxvt", "alacritty",
+                          "kitty", "tilix", "terminator", "st-256color")
+        return any(t in wm_class for t in terminal_names)
+    except Exception:
+        return False
+
+
+def simulate_typing_with_clipboard(delete_prev_chars: int, text: str) -> None:
+    # No setup/tear-down.
+    if delete_prev_chars == SIMULATE_INPUT_CODE_COMMAND:
+        return
+
+    if delete_prev_chars:
+        run_command_or_exit_on_failure(
+            [
+                "xdotool",
+                "key",
+                "--",
+                *(["BackSpace"] * delete_prev_chars),
+            ]
+        )
+
+    proc = subprocess.Popen(["xsel", "--clipboard", "--input"], stdin=subprocess.PIPE)
+    proc.communicate(text.encode("utf-8"))
+    if proc.returncode not in (0, None):
+        sys.stderr.write("xsel failed to set clipboard — is xsel installed?\n")
+        return
+
+    # Terminals use Ctrl+Shift+V to paste; GUI apps use Ctrl+V.
+    paste_key = "ctrl+shift+v" if _active_window_is_terminal() else "ctrl+v"
+    run_command_or_exit_on_failure(["xdotool", "key", "--clearmodifiers", paste_key])
+
+
+# -----------------------------------------------------------------------------
 # Simulate Input: STDOUT
 #
 def simulate_typing_with_stdout(delete_prev_chars: int, text: str) -> None:
@@ -799,6 +846,19 @@ class from_words_to_digits:
 
 
 # -----------------------------------------------------------------------------
+# Arabic Text Detection
+#
+
+
+def _is_arabic_text(text: str) -> bool:
+    non_space = text.replace(" ", "")
+    if not non_space:
+        return False
+    arabic = sum(1 for c in non_space if "؀" <= c <= "ۿ")
+    return arabic / len(non_space) > 0.3
+
+
+# -----------------------------------------------------------------------------
 # Process Text
 #
 
@@ -852,9 +912,8 @@ def process_text(
         )
 
     # Optional?
-    if full_sentence:
+    if full_sentence and not _is_arabic_text(words[0]):
         words[0] = words[0].capitalize()
-        words[-1] = words[-1]
 
     return " ".join(words)
 
@@ -923,6 +982,149 @@ def recording_proc_with_non_blocking_stdout(
     file_handle_make_non_blocking(stdout)
 
     return ps, stdout
+
+
+# -----------------------------------------------------------------------------
+# Text from Whisper (faster-whisper)
+#
+
+
+def text_from_whisper_pipe(
+    *,
+    whisper_model_name: str,
+    whisper_device: str,
+    language: str,
+    exit_fn: Callable[..., int],
+    process_fn: Callable[[str], str],
+    handle_fn: Callable[[int, str], None],
+    timeout: float,
+    idle_time: float,
+    input_method: str,
+    pulse_device_name: str = "",
+    verbose: int = 0,
+) -> bool:
+    import signal
+
+    try:
+        import numpy as np
+    except ImportError:
+        sys.stderr.write("numpy is required for the Whisper engine: pip install numpy\n")
+        sys.exit(1)
+
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError:
+        sys.stderr.write(
+            "faster-whisper is required for the Whisper engine: pip install faster-whisper\n"
+        )
+        sys.exit(1)
+
+    # Whisper requires 16 kHz mono audio.
+    sample_rate = 16000
+    compute_type = "float16" if whisper_device == "cuda" else "int8"
+
+    if verbose >= 1:
+        sys.stderr.write("Loading Whisper model '%s' on %s...\n" % (whisper_model_name, whisper_device))
+
+    model = WhisperModel(whisper_model_name, device=whisper_device, compute_type=compute_type)
+
+    if verbose >= 1:
+        sys.stderr.write("Whisper model loaded.\n")
+
+    ps, stdout = recording_proc_with_non_blocking_stdout(input_method, sample_rate, pulse_device_name)
+
+    # Notify user that the model is loaded and recording has actually started.
+    # dictate-start fires a "loading" notification; this fires when we are truly ready.
+    try:
+        subprocess.Popen(
+            ["notify-send", "Dictation Ready", "Now listening — speak now.",
+             "--icon=microphone", "--app-name=nerd-dictation"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except FileNotFoundError:
+        pass
+
+    handle_fn(SIMULATE_INPUT_CODE_COMMAND, "SETUP")
+
+    audio_chunks: List[bytes] = []
+    code = 0
+
+    use_timeout = timeout != 0.0
+    if use_timeout:
+        timeout_silence_prev = time.time()
+
+    if idle_time > 0.0:
+        idle_time_prev = time.time()
+
+    while code == 0:
+        code = exit_fn(False)
+
+        if idle_time > 0.0:
+            idle_time_curr = time.time()
+            idle_time_test = idle_time - (idle_time_curr - idle_time_prev)
+            if idle_time_test > 0.0:
+                time.sleep(idle_time_test)
+                idle_time_prev = time.time()
+            else:
+                idle_time_prev = idle_time_curr
+
+        try:
+            data = stdout.read(1_048_576)
+        except OSError:
+            data = None
+
+        if data:
+            audio_chunks.append(data)
+
+            if use_timeout:
+                chunk_int16 = np.frombuffer(data, dtype=np.int16)
+                rms = float(np.sqrt(np.mean(chunk_int16.astype(np.float32) ** 2)))
+                # Reset silence timer whenever audio is louder than background noise.
+                if rms > 200.0:
+                    timeout_silence_prev = time.time()
+                elif time.time() - timeout_silence_prev > timeout:
+                    if code == 0:
+                        code = 1
+
+    os.kill(ps.pid, signal.SIGINT)
+    handle_fn(SIMULATE_INPUT_CODE_COMMAND, "TEARDOWN")
+
+    if code == -1:
+        sys.stderr.write("Text input canceled!\n")
+        sys.exit(0)
+
+    if not audio_chunks:
+        sys.stderr.write("Whisper: no audio captured.\n")
+        return False
+
+    audio_bytes = b"".join(audio_chunks)
+    audio_int16 = np.frombuffer(audio_bytes, dtype=np.int16)
+    audio_float32 = audio_int16.astype(np.float32) / 32768.0
+
+    duration_secs = len(audio_float32) / sample_rate
+    if verbose >= 1:
+        sys.stderr.write("Transcribing %.1f seconds of audio...\n" % duration_secs)
+
+    segments, _info = model.transcribe(
+        audio_float32,
+        language=language if language else None,
+        beam_size=5,
+        vad_filter=True,
+    )
+
+    text = " ".join(seg.text.strip() for seg in segments).strip()
+
+    if verbose >= 1:
+        sys.stderr.write("Transcribed: %r\n" % text)
+
+    if text:
+        text = process_fn(text)
+        if text:
+            handle_fn(0, text)
+            return True
+
+    return False
 
 
 def text_from_vosk_pipe(
@@ -1290,6 +1492,10 @@ def main_begin(
     suspend_on_start: bool = False,
     verbose: int = 0,
     vosk_grammar_file: str = "",
+    engine: str = "VOSK",
+    whisper_model_name: str = "small",
+    whisper_device: str = "cpu",
+    language: str = "",
 ) -> None:
     """
     Initialize audio recording, then full text to speech conversion can take place.
@@ -1424,6 +1630,8 @@ def main_begin(
             handle_fn = simulate_typing_with_wtype
         elif simulate_input_tool == "STDOUT":
             handle_fn = simulate_typing_with_stdout
+        elif simulate_input_tool == "CLIPBOARD":
+            handle_fn = simulate_typing_with_clipboard
         else:
             raise Exception("Internal error, unknown input tool: {!r}".format(simulate_input_tool))
 
@@ -1442,22 +1650,37 @@ def main_begin(
         # Unreachable.
         assert False
 
-    found_any = text_from_vosk_pipe(
-        vosk_model_dir=vosk_model_dir,
-        pulse_device_name=pulse_device_name,
-        sample_rate=sample_rate,
-        input_method=input_method,
-        timeout=timeout,
-        idle_time=idle_time,
-        progressive=progressive,
-        progressive_continuous=progressive_continuous,
-        exit_fn=exit_fn,
-        process_fn=process_fn,
-        handle_fn=handle_fn,
-        suspend_on_start=suspend_on_start,
-        verbose=verbose,
-        vosk_grammar_file=vosk_grammar_file,
-    )
+    if engine == "WHISPER":
+        found_any = text_from_whisper_pipe(
+            whisper_model_name=whisper_model_name,
+            whisper_device=whisper_device,
+            language=language,
+            exit_fn=exit_fn,
+            process_fn=process_fn,
+            handle_fn=handle_fn,
+            timeout=timeout,
+            idle_time=idle_time,
+            input_method=input_method,
+            pulse_device_name=pulse_device_name,
+            verbose=verbose,
+        )
+    else:
+        found_any = text_from_vosk_pipe(
+            vosk_model_dir=vosk_model_dir,
+            pulse_device_name=pulse_device_name,
+            sample_rate=sample_rate,
+            input_method=input_method,
+            timeout=timeout,
+            idle_time=idle_time,
+            progressive=progressive,
+            progressive_continuous=progressive_continuous,
+            exit_fn=exit_fn,
+            process_fn=process_fn,
+            handle_fn=handle_fn,
+            suspend_on_start=suspend_on_start,
+            verbose=verbose,
+            vosk_grammar_file=vosk_grammar_file,
+        )
 
     if not found_any:
         sys.stderr.write("No text found in the audio\n")
@@ -1799,7 +2022,7 @@ def argparse_create_begin(subparsers: "argparse._SubParsersAction[argparse.Argum
         "--simulate-input-tool",
         dest="simulate_input_tool",
         default="XDOTOOL",
-        choices=("XDOTOOL", "DOTOOL", "DOTOOLC", "YDOTOOL", "WTYPE", "STDOUT"),
+        choices=("XDOTOOL", "DOTOOL", "DOTOOLC", "YDOTOOL", "WTYPE", "STDOUT", "CLIPBOARD"),
         metavar="SIMULATE_INPUT_TOOL",
         help=(
             "Program used to simulate keystrokes (default).\n"
@@ -1810,6 +2033,9 @@ def argparse_create_begin(subparsers: "argparse._SubParsersAction[argparse.Argum
             "- ``YDOTOOL`` Compatible with all Linux distributions and Wayland but requires some setup.\n"
             "- ``WTYPE`` Compatible with Wayland.\n"
             "- ``STDOUT`` Bare stdout with Ctrl-H for backspaces.\n"
+            "- ``CLIPBOARD`` Copy text to clipboard via xsel then paste with Ctrl+V.\n"
+            "  Use this for Arabic or other RTL/Unicode text that xdotool cannot type.\n"
+            "  Requires: xsel and xdotool.\n"
             "  For help on setting up ydotool, see ``readme-ydotool.rst`` in the nerd-dictation repository.\n"
         ),
         required=False,
@@ -1825,6 +2051,67 @@ def argparse_create_begin(subparsers: "argparse._SubParsersAction[argparse.Argum
             "\n"
             "- Level 1: report top level actions (dictation started, suspended .. etc).\n"
             "- Level 2: report internal details (may be noisy)."
+        ),
+        required=False,
+    )
+
+    subparse.add_argument(
+        "--engine",
+        dest="engine",
+        default="VOSK",
+        choices=("VOSK", "WHISPER"),
+        metavar="ENGINE",
+        help=(
+            "Speech recognition engine to use (default: VOSK).\n"
+            "\n"
+            "- ``VOSK`` Offline recognition using a VOSK model (default).\n"
+            "- ``WHISPER`` High-accuracy recognition using faster-whisper.\n"
+            "  Requires: pip install faster-whisper\n"
+            "  Transcription happens after recording stops (deferred output).\n"
+            "  Recommended for Arabic and other non-English languages."
+        ),
+        required=False,
+    )
+
+    subparse.add_argument(
+        "--whisper-model",
+        dest="whisper_model_name",
+        default="small",
+        type=str,
+        metavar="MODEL",
+        help=(
+            "Whisper model name or path (used when --engine=WHISPER).\n"
+            "Model names: tiny, base, small, medium, large-v2, large-v3.\n"
+            "A local directory path can also be given.\n"
+            "Defaults to 'small'. Use 'medium' or 'large-v3' for higher accuracy."
+        ),
+        required=False,
+    )
+
+    subparse.add_argument(
+        "--whisper-device",
+        dest="whisper_device",
+        default="cpu",
+        choices=("cpu", "cuda"),
+        metavar="DEVICE",
+        help=(
+            "Device to run Whisper on (used when --engine=WHISPER).\n"
+            "- ``cpu`` Run on CPU using int8 quantization (default).\n"
+            "- ``cuda`` Run on NVIDIA GPU using float16 (much faster)."
+        ),
+        required=False,
+    )
+
+    subparse.add_argument(
+        "--language",
+        dest="language",
+        default="",
+        type=str,
+        metavar="LANGUAGE_CODE",
+        help=(
+            "Language code for transcription (used when --engine=WHISPER).\n"
+            "Examples: 'ar' for Arabic, 'en' for English, 'fr' for French.\n"
+            "Leave empty for automatic language detection."
         ),
         required=False,
     )
@@ -1864,6 +2151,10 @@ def argparse_create_begin(subparsers: "argparse._SubParsersAction[argparse.Argum
             suspend_on_start=args.suspend_on_start,
             verbose=args.verbose,
             vosk_grammar_file=args.vosk_grammar_file,
+            engine=args.engine,
+            whisper_model_name=args.whisper_model_name,
+            whisper_device=args.whisper_device,
+            language=args.language,
         ),
     )
 
