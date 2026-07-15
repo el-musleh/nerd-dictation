@@ -206,7 +206,11 @@ if [ "$USE_WLK" = "true" ]; then
         echo "Started English dictation (engine: WLK)" >> /tmp/nerd-dictation-en.log
     else
         # Fallback: stop WLK, run VOSK instead.
-        kill "$WLK_PID" 2>/dev/null; pkill -f "whisperlivekit" 2>/dev/null
+        # Kill the daemon AND its direct children (the whisperlivekit server)
+        # so no orphan streaming/typing process survives and double-runs with VOSK.
+        pkill -P "$WLK_PID" 2>/dev/null
+        kill "$WLK_PID" 2>/dev/null
+        pkill -f "whisperlivekit" 2>/dev/null
         echo "WLK failed to start in time — falling back to VOSK" >> /tmp/nerd-dictation-en.log
         ENGINE="VOSK"
         USE_WHISPER=false
@@ -218,7 +222,9 @@ if [ "$USE_WLK" = "true" ]; then
             VOSK_GRAMMAR_ARGS=(--vosk-grammar-file "$VOSK_GRAMMAR")
         fi
         if [ "${VAD_GATE:-off}" = "on" ] && command -v parec &>/dev/null; then
-            parec --record --rate=16000 --channels=1 --format=s16le --latency=10 ${AUDIO_DEVICE:+"--device=$AUDIO_DEVICE"} 2>/dev/null \
+            dev_args=()
+            [ -n "${AUDIO_DEVICE:-}" ] && dev_args=(--device "$AUDIO_DEVICE")
+            parec --record --rate=16000 --channels=1 --format=s16le --latency=10 "${dev_args[@]}" 2>/dev/null \
                 | "$SCRIPT_DIR/vad_gate.py" \
                 | "$NERD_DICTATION" begin --vosk-model-dir="$MODEL_DIR" \
                     --input VADPIPE --timeout=$VOSK_TIMEOUT \
@@ -265,7 +271,9 @@ else
     # Logs go to /tmp/nerd-dictation-en.log — check this file to debug English issues
     if [ "${VAD_GATE:-off}" = "on" ] && command -v parec &>/dev/null; then
         # VAD-gated capture: parec -> Silero VAD gate -> nerd-dictation (reads stdin).
-        parec --record --rate=16000 --channels=1 --format=s16le --latency=10 ${AUDIO_DEVICE:+"--device=$AUDIO_DEVICE"} 2>/dev/null \
+        dev_args=()
+        [ -n "${AUDIO_DEVICE:-}" ] && dev_args=(--device "$AUDIO_DEVICE")
+        parec --record --rate=16000 --channels=1 --format=s16le --latency=10 "${dev_args[@]}" 2>/dev/null \
             | "$SCRIPT_DIR/vad_gate.py" \
             | "$NERD_DICTATION" begin \
                 --vosk-model-dir="$MODEL_DIR" \
