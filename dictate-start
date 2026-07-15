@@ -34,6 +34,12 @@ case "$WHISPER_DAEMON_MODE" in
        exit 1 ;;
 esac
 
+# Export WHISPER transcript settings into the environment so the WHISPER path
+# (whisper-daemon / nerd-dictation WHISPER engine) inherits them. Empty by
+# default -> the export hook is a no-op. VOSK doesn't use these.
+export WHISPER_EXPORT_PATH
+export OUTPUT_FORMAT
+
 # Parse arguments
 VERBOSE=false
 if [ "$1" = "--verbose" ] || [ "$1" = "-v" ]; then

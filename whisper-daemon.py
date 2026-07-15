@@ -54,11 +54,11 @@ def transcribe(model_name, language, compute_type, audio_bytes):
             max_speech_duration_s=30,
             min_silence_duration_ms=700,  # require this much silence to end a segment
             speech_pad_ms=200,           # pad edges so words aren't clipped
-            window_size_samples=512,
         ),
         condition_on_previous_text=False,  # avoid hallucination drift across turns
     )
     kept = []
+    seg_records = []
     for seg in segments:
         text = seg.text.strip()
         # drop empty segments
@@ -71,7 +71,20 @@ def transcribe(model_name, language, compute_type, audio_bytes):
             if (end - start) < 0.3 and len(text) <= 2:
                 continue
         kept.append(text)
-    return " ".join(kept).strip()
+        if start is not None and end is not None:
+            seg_records.append({"start": start, "end": end, "text": text})
+    text = " ".join(kept).strip()
+
+    # Optional export (subtitles / structured formats). Off unless configured.
+    export_path = os.environ.get("WHISPER_EXPORT_PATH")
+    if export_path:
+        fmt = os.environ.get("OUTPUT_FORMAT", "srt")
+        try:
+            from export_subs import export as _export
+            _export(text, seg_records, fmt, export_path)
+        except Exception as ex:  # noqa: BLE001
+            sys.stderr.write(f"[whisper-daemon] export failed: {ex}\n")
+    return text
 
 
 def handle_client(conn):
