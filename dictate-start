@@ -83,7 +83,7 @@ case "$CURRENT_LAYOUT" in
             WHISPER_TOOL="XDOTOOL"
         else
             USE_WHISPER=false
-            MODEL_DIR="$MODEL_BASE/model-en-us-0.22"
+            MODEL_DIR="$MODEL_BASE/vosk-model-en-us-0.22"
             VOSK_GRAMMAR="$MODEL_BASE/grammar-en-tech.json"
         fi
         ;;
@@ -116,6 +116,10 @@ sleep 0.3
 # Start dictation
 if [ "$USE_WHISPER" = "true" ]; then
     ENGINE="WHISPER"
+    DAEMON_MODE_ARGS=(--whisper-daemon-mode "$WHISPER_DAEMON_MODE")
+    if [ "$WHISPER_DAEMON_MODE" = "ipc" ]; then
+        DAEMON_MODE_ARGS+=(--whisper-socket "$WHISPER_SOCKET")
+    fi
     # Logs go to /tmp/nerd-dictation-ar.log — check this file to debug Arabic issues
     "$NERD_DICTATION" begin \
         --engine WHISPER \
@@ -125,6 +129,7 @@ if [ "$USE_WHISPER" = "true" ]; then
         --simulate-input-tool "$WHISPER_TOOL" \
         --input "$INPUT_METHOD" \
         --timeout=$TIMEOUT \
+        "${DAEMON_MODE_ARGS[@]}" \
         --verbose 1 >> /tmp/nerd-dictation-ar.log 2>&1 &
 else
     ENGINE="VOSK"
