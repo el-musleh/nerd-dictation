@@ -31,6 +31,9 @@ import sys
 WLK_VENV_PYTHON = "/home/steve/dev/stt/WhisperLiveKit/.venv/bin/python"
 WLK_SERVER_HOST = os.environ.get("WLK_HOST", "127.0.0.1")
 WLK_SERVER_PORT = int(os.environ.get("WLK_PORT", "8000"))
+# Touch when the WLK server is confirmed up; removed on exit. dictate-start
+# watches this to decide whether to fall back to VOSK.
+WLK_READY_FILE = os.path.expanduser("~/.cache/nerd-dictation/wlk-ready")
 SAMPLE_RATE = 16000
 CHUNK_DURATION = 0.25  # seconds per PCM chunk sent
 
@@ -113,6 +116,12 @@ async def run(model: str, language: str) -> None:
     server = start_server(model, language)
     try:
         await wait_for_server()
+        # Signal readiness so dictate-start knows WLK came up (no VOSK fallback).
+        try:
+            os.makedirs(os.path.dirname(WLK_READY_FILE), exist_ok=True)
+            open(WLK_READY_FILE, "w").close()
+        except Exception:
+            pass
         url = f"ws://{WLK_SERVER_HOST}:{WLK_SERVER_PORT}/asr"
         if language:
             url += f"?language={language}"
@@ -203,6 +212,11 @@ async def run(model: str, language: str) -> None:
             server.wait(timeout=10)
         except Exception:
             server.kill()
+        # Clear readiness flag on exit (so dictate-start won't see a stale one).
+        try:
+            os.remove(WLK_READY_FILE)
+        except Exception:
+            pass
 
 
 def main():

@@ -120,12 +120,47 @@ sleep 0.3
 # Start dictation
 if [ "$USE_WLK" = "true" ]; then
     ENGINE="WLK"
-    # WhisperLiveKit real-time streaming backend. wlk-daemon.py launches the
-    # WLK server + streams mic audio + types committed text (xdotool).
     WLK_MODEL="${WLK_MODEL:-small}"
     WLK_LANG="${WLK_LANG:-en}"
+    WLK_READY_FILE="$HOME/.cache/nerd-dictation/wlk-ready"
+    rm -f "$WLK_READY_FILE"
     "$SCRIPT_DIR/wlk-daemon.py" --model "$WLK_MODEL" --language "$WLK_LANG" \
         >> /tmp/nerd-dictation-en.log 2>&1 &
+    WLK_PID=$!
+    # Wait for WLK server to come up; fall back to VOSK if it doesn't.
+    READY=0
+    for _ in $(seq 1 "${WLK_READY_TIMEOUT:-30}"); do
+        if [ -f "$WLK_READY_FILE" ]; then READY=1; break; fi
+        if ! kill -0 "$WLK_PID" 2>/dev/null; then break; fi
+        sleep 1
+    done
+    if [ "$READY" = "1" ]; then
+        PID=$WLK_PID
+        echo "Started English dictation (engine: WLK)" >> /tmp/nerd-dictation-en.log
+    else
+        # Fallback: stop WLK, run VOSK instead.
+        kill "$WLK_PID" 2>/dev/null; pkill -f "whisperlivekit" 2>/dev/null
+        echo "WLK failed to start in time — falling back to VOSK" >> /tmp/nerd-dictation-en.log
+        ENGINE="VOSK"
+        USE_WHISPER=false
+        MODEL_DIR="$MODEL_BASE/vosk-model-en-us-0.22"
+        VOSK_GRAMMAR="$MODEL_BASE/grammar-en-tech.json"
+        VOSK_GRAMMAR_ARGS=()
+        if [ -n "$VOSK_GRAMMAR" ] && [ -f "$VOSK_GRAMMAR" ]; then
+            VOSK_GRAMMAR_ARGS=(--vosk-grammar-file "$VOSK_GRAMMAR")
+        fi
+        if [ "${VAD_GATE:-off}" = "on" ] && command -v parec &>/dev/null; then
+            parec --record --rate=16000 --channels=1 --format=s16le --latency=10 2>/dev/null \
+                | "$SCRIPT_DIR/vad_gate.py" \
+                | "$NERD_DICTATION" begin --vosk-model-dir="$MODEL_DIR" \
+                    --input VADPIPE --timeout=$VOSK_TIMEOUT \
+                    "${VOSK_GRAMMAR_ARGS[@]}" --verbose 1 >> /tmp/nerd-dictation-en.log 2>&1 &
+        else
+            "$NERD_DICTATION" begin --vosk-model-dir="$MODEL_DIR" --input "$INPUT_METHOD" \
+                --timeout=$VOSK_TIMEOUT "${VOSK_GRAMMAR_ARGS[@]}" --verbose 1 >> /tmp/nerd-dictation-en.log 2>&1 &
+        fi
+        PID=$!
+    fi
 elif [ "$USE_WHISPER" = "true" ]; then
     ENGINE="WHISPER"
     DAEMON_MODE_ARGS=(--whisper-daemon-mode "$WHISPER_DAEMON_MODE")
