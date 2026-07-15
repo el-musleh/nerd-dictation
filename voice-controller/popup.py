@@ -189,6 +189,22 @@ def run_script(path, log=None):
             log.error("Failed to run %s: %s", path, e)
 
 
+def apply_window_hints(window, cfg):
+    """Apply WM hints so the panel is accessible in alt-tab / task-switchers.
+
+    Default: utility window + skip-taskbar (clean, doesn't clutter), with a
+    proper WM class so it still shows as 'VoiceController' when switching tabs.
+    PANEL_IN_TASKBAR=on makes it a normal taskbar entry instead.
+    """
+    window.set_wmclass("voice-controller", "VoiceController")
+    try:
+        window.set_type_hint(Gdk.WindowTypeHint.UTILITY)
+    except Exception:  # noqa: BLE001
+        pass
+    in_taskbar = cfg.get("PANEL_IN_TASKBAR", "off") == "on"
+    window.set_skip_taskbar_hint(not in_taskbar)
+
+
 def read_config():
     cfg = {}
     if not os.path.exists(CONFIG_FILE):
@@ -574,7 +590,6 @@ class PopupPanel(Gtk.Window):
         self.set_resizable(False)
         self.set_keep_above(True)
         self.set_decorated(False)
-        self.set_skip_taskbar_hint(True)
 
         self._on_start = on_start
         self._on_stop = on_stop
@@ -589,6 +604,8 @@ class PopupPanel(Gtk.Window):
         self._tailer.start()
 
         self._cfg = read_config()
+        # WM hints: proper class + utility hint so it shows in alt-tab/switcher.
+        apply_window_hints(self, self._cfg)
         self._history_session = []
         self._partial_start = None
         self._cur_state = "IDLE"
