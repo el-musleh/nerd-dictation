@@ -126,10 +126,14 @@ async def run(model: str, language: str) -> None:
         if language:
             url += f"?language={language}"
 
-        # parec: PCM s16le mono 16kHz from the default PulseAudio source.
+        # parec: PCM s16le mono 16kHz from the configured PulseAudio source.
+        parec_cmd = ["parec", "--format=s16le", "--rate", str(SAMPLE_RATE),
+                     "--channels", "1"]
+        dev = os.environ.get("WLK_AUDIO_DEVICE") or os.environ.get("AUDIO_DEVICE")
+        if dev:
+            parec_cmd += ["--device", dev]
         parec = await asyncio.create_subprocess_exec(
-            "parec", "--format=s16le", "--rate", str(SAMPLE_RATE),
-            "--channels", "1",
+            *parec_cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )

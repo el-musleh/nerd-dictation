@@ -187,7 +187,7 @@ if [ "$USE_WLK" = "true" ]; then
             VOSK_GRAMMAR_ARGS=(--vosk-grammar-file "$VOSK_GRAMMAR")
         fi
         if [ "${VAD_GATE:-off}" = "on" ] && command -v parec &>/dev/null; then
-            parec --record --rate=16000 --channels=1 --format=s16le --latency=10 2>/dev/null \
+            parec --record --rate=16000 --channels=1 --format=s16le --latency=10 ${AUDIO_DEVICE:+"--device=$AUDIO_DEVICE"} 2>/dev/null \
                 | "$SCRIPT_DIR/vad_gate.py" \
                 | "$NERD_DICTATION" begin --vosk-model-dir="$MODEL_DIR" \
                     --input VADPIPE --timeout=$VOSK_TIMEOUT \
@@ -224,7 +224,7 @@ else
     # Logs go to /tmp/nerd-dictation-en.log — check this file to debug English issues
     if [ "${VAD_GATE:-off}" = "on" ] && command -v parec &>/dev/null; then
         # VAD-gated capture: parec -> Silero VAD gate -> nerd-dictation (reads stdin).
-        parec --record --rate=16000 --channels=1 --format=s16le --latency=10 2>/dev/null \
+        parec --record --rate=16000 --channels=1 --format=s16le --latency=10 ${AUDIO_DEVICE:+"--device=$AUDIO_DEVICE"} 2>/dev/null \
             | "$SCRIPT_DIR/vad_gate.py" \
             | "$NERD_DICTATION" begin \
                 --vosk-model-dir="$MODEL_DIR" \
