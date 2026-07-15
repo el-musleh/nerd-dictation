@@ -58,7 +58,20 @@ def transcribe(model_name, language, compute_type, audio_bytes):
         ),
         condition_on_previous_text=False,  # avoid hallucination drift across turns
     )
-    return " ".join(seg.text.strip() for seg in segments).strip()
+    kept = []
+    for seg in segments:
+        text = seg.text.strip()
+        # drop empty segments
+        if not text:
+            continue
+        # drop sub-0.3s non-speech leftovers (breath/click artifacts)
+        start = getattr(seg, "start", None)
+        end = getattr(seg, "end", None)
+        if start is not None and end is not None:
+            if (end - start) < 0.3 and len(text) <= 2:
+                continue
+        kept.append(text)
+    return " ".join(kept).strip()
 
 
 def handle_client(conn):
