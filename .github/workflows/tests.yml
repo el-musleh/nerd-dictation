@@ -1,0 +1,37 @@
+name: tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pure-Python test deps (no models / no torch)
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest numpy soundfile
+
+      - name: Run light unit tests (model-free)
+        # Heavy tests (Silero VAD, faster-whisper, WLK) need model downloads
+        # and are excluded here; run them locally with models cached.
+        run: |
+          pytest tests/ -q -k "not (vad_gate or whisper_daemon or e2e_audio)"
+
+  bash:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run bash unit tests (no GUI / no network)
+        run: |
+          sudo apt-get update && sudo apt-get install -y shellcheck || true
+          bash tests/test_lib_common.sh
