@@ -150,11 +150,22 @@ else
         VOSK_GRAMMAR_ARGS=(--vosk-grammar-file "$VOSK_GRAMMAR")
     fi
     # Logs go to /tmp/nerd-dictation-en.log — check this file to debug English issues
-    "$NERD_DICTATION" begin \
-        --vosk-model-dir="$MODEL_DIR" \
-        --input "$INPUT_METHOD" \
-        --timeout=$VOSK_TIMEOUT \
-        "${VOSK_GRAMMAR_ARGS[@]}" --verbose 1 >> /tmp/nerd-dictation-en.log 2>&1 &
+    if [ "${VAD_GATE:-off}" = "on" ] && command -v parec &>/dev/null; then
+        # VAD-gated capture: parec -> Silero VAD gate -> nerd-dictation (reads stdin).
+        parec --record --rate=16000 --channels=1 --format=s16le --latency=10 2>/dev/null \
+            | "$SCRIPT_DIR/vad_gate.py" \
+            | "$NERD_DICTATION" begin \
+                --vosk-model-dir="$MODEL_DIR" \
+                --input VADPIPE \
+                --timeout=$VOSK_TIMEOUT \
+                "${VOSK_GRAMMAR_ARGS[@]}" --verbose 1 >> /tmp/nerd-dictation-en.log 2>&1 &
+    else
+        "$NERD_DICTATION" begin \
+            --vosk-model-dir="$MODEL_DIR" \
+            --input "$INPUT_METHOD" \
+            --timeout=$VOSK_TIMEOUT \
+            "${VOSK_GRAMMAR_ARGS[@]}" --verbose 1 >> /tmp/nerd-dictation-en.log 2>&1 &
+    fi
 fi
 PID=$!
 

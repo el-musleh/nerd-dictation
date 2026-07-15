@@ -970,6 +970,15 @@ def recording_proc_with_non_blocking_stdout(
             "--channels=1",
             "-",
         )
+    elif input_method == "VADPIPE":
+        # Audio is already captured + VAD-gated upstream (e.g. parec | vad_gate.py)
+        # and delivered on stdin as raw s16le mono at sample_rate.
+        ps = subprocess.Popen(
+            ["cat"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        )
+        stdout = ps.stdout
+        assert stdout is not None
+        return ps, stdout
     else:
         sys.stderr.write("--input %r not supported.\n" % input_method)
         sys.exit(1)
@@ -2160,7 +2169,7 @@ def argparse_create_begin(subparsers: "argparse._SubParsersAction[argparse.Argum
         default="PAREC",
         type=str,
         metavar="INPUT_METHOD",
-        choices=("PAREC", "SOX", "PW-CAT"),
+        choices=("PAREC", "SOX", "PW-CAT", "VADPIPE"),
         help=(
             "Specify input method to be used for audio recording. Valid methods: PAREC, SOX, PW-CAT.\n"
             "\n"
