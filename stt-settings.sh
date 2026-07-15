@@ -67,6 +67,7 @@ if [ "$EXIT" -eq 0 ]; then
     WC=$(echo "$RESULTS" | cut -d'|' -f10 | grep -o '[0-9.]\+' | head -1); WC=${WC:-0.25}
     WP=$(echo "$RESULTS" | cut -d'|' -f11)
     CT=$(echo "$RESULTS" | cut -d'|' -f12)
+    AT=$(echo "$RESULTS" | cut -d'|' -f13)
 
     _set() {  # key newvalue -> replace or append in config.sh
         local k="$1" v="$2"
@@ -88,4 +89,5 @@ if [ "$EXIT" -eq 0 ]; then
     _set WLK_CHUNK             "$WC"
     _set WLK_POLICY            "$WP"
     _set COMPUTE_TYPE          "$CT"
+    _set AUTO_LANG             "$AT"
 fi

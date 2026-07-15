@@ -6,6 +6,8 @@
 #
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1090
+source "$SCRIPT_DIR/lib_common.sh"
 NERD_DICTATION="$SCRIPT_DIR/nerd-dictation"
 STATE_FILE="$HOME/.dictate-state"
 MODEL_BASE="$HOME/.config/nerd-dictation"
@@ -52,6 +54,8 @@ export OUTPUT_FORMAT
 export PUNCTUATE
 # Whisper quantization.
 export COMPUTE_TYPE
+# Per-language Whisper model map.
+export LANG_MODELS
 # VAD tuning for the VOSK (VAD_GATE) path.
 export VAD_THRESHOLD
 export VAD_MIN_SILENCE_MS
@@ -158,6 +162,13 @@ case "$CURRENT_LAYOUT" in
         exit 1
         ;;
 esac
+
+# Resolve the Whisper model for the active language, honoring LANG_MODELS
+# overrides (lang:model pairs). Falls back to WHISPER_MODEL set in the case above.
+# WHISPER_LANG holds the Whisper language code (en/ar/...).
+if [ "$USE_WHISPER" = "true" ]; then
+    WHISPER_MODEL="$(resolve_whisper_model "$WHISPER_LANG" "$WHISPER_MODEL")"
+fi
 
 # For VOSK engine: check that the model directory exists
 if [ "$USE_WLK" = "false" ] && [ "$USE_WHISPER" = "false" ] && [ ! -d "$MODEL_DIR" ]; then
