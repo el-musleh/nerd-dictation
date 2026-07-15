@@ -54,7 +54,8 @@ class VoiceController:
     def __init__(self):
         self.log = _setup_logging()
         self.mode = 'STT'
-        self._state = None
+        state_tuple = statemod.parse_dictate_state_full(DICTATE_STATE_FILE)
+        self._state = state_tuple[0]
         self._running = True
         self._lock_fd = None
 

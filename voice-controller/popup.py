@@ -1036,6 +1036,9 @@ class PopupPanel(Gtk.Window):
 
     def update_state(self, state, lang="", engine=""):
         prev_state = self._cur_state
+        if state == prev_state and engine == self._cur_engine:
+            return
+        
         self._cur_state = state
         if engine:
             self._cur_engine = engine
