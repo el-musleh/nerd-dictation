@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NERD_DICTATION="$SCRIPT_DIR/nerd-dictation"
 STATE_FILE="$HOME/.dictate-state"
 MODEL_BASE="$HOME/.config/nerd-dictation"
-TIMEOUT=30
+TIMEOUT=7
 
 # Load runtime switches (env vars override values set in this file).
 if [ -f "$MODEL_BASE/config.sh" ]; then
@@ -74,15 +74,24 @@ fi
 USE_WHISPER=false
 case "$CURRENT_LAYOUT" in
     us)
-        MODEL_DIR="$MODEL_BASE/model"
         LANG_NAME="English"
         LANG_CODE="us"
+        if [ "$ENGLISH_ENGINE" = "WHISPER" ]; then
+            USE_WHISPER=true
+            WHISPER_MODEL="$ENGLISH_WHISPER_MODEL"   # small.en
+            WHISPER_LANG="en"
+            WHISPER_TOOL="XDOTOOL"
+        else
+            USE_WHISPER=false
+            MODEL_DIR="$MODEL_BASE/model-en-us-0.22"
+            VOSK_GRAMMAR="$MODEL_BASE/grammar-en-tech.json"
+        fi
         ;;
     ara)
         LANG_NAME="Arabic"
         LANG_CODE="ara"
         USE_WHISPER=true
-        WHISPER_MODEL="small"
+        WHISPER_MODEL="$ARABIC_WHISPER_MODEL"         # small
         WHISPER_LANG="ar"
         WHISPER_TOOL="CLIPBOARD"
         ;;
@@ -119,10 +128,15 @@ if [ "$USE_WHISPER" = "true" ]; then
         --verbose 1 >> /tmp/nerd-dictation-ar.log 2>&1 &
 else
     ENGINE="VOSK"
+    VOSK_GRAMMAR_ARGS=()
+    if [ -n "$VOSK_GRAMMAR" ] && [ -f "$VOSK_GRAMMAR" ]; then
+        VOSK_GRAMMAR_ARGS=(--vosk-grammar-file "$VOSK_GRAMMAR")
+    fi
     "$NERD_DICTATION" begin \
         --vosk-model-dir="$MODEL_DIR" \
         --input "$INPUT_METHOD" \
-        --timeout=$TIMEOUT &
+        --timeout=$TIMEOUT \
+        "${VOSK_GRAMMAR_ARGS[@]}" &
 fi
 PID=$!
 
