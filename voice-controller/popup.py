@@ -205,6 +205,19 @@ def apply_window_hints(window, cfg):
     window.set_skip_taskbar_hint(not in_taskbar)
 
 
+def should_auto_show(engine, cfg):
+    """Whether the panel should auto-front when dictation starts.
+
+    We auto-show for non-streaming engines (VOSK) so the live transcript is
+    visible immediately; WHISPER/WLK already stream into their own UIs.
+    """
+    if not engine:
+        return False
+    if engine in ("WHISPER", "WLK"):
+        return False
+    return cfg.get("AUTO_SHOW_ON_VOSK", "on") == "on"
+
+
 def read_config():
     cfg = {}
     if not os.path.exists(CONFIG_FILE):
@@ -689,8 +702,9 @@ class PopupPanel(Gtk.Window):
         main_box.pack_start(ctrl_box, False, False, 4)
 
         # ── Notebook ────────────────────────────────────────────────────────
-        nb = Gtk.Notebook()
-        main_box.pack_start(nb, True, True, 4)
+        self._nb = Gtk.Notebook()
+        main_box.pack_start(self._nb, True, True, 4)
+        self._live_page_index = 0
 
         # Tab 1: Live
         live_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -713,7 +727,7 @@ class PopupPanel(Gtk.Window):
         scrolled_live.add(self._live_text)
         live_box.pack_start(scrolled_live, True, True, 4)
 
-        nb.append_page(live_box, Gtk.Label(label="  Live  "))
+        self._nb.append_page(live_box, Gtk.Label(label="  Live  "))
 
         # Tab 2: Engine Configuration
         eng_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -882,7 +896,7 @@ class PopupPanel(Gtk.Window):
         self._engine_status_lbl.set_alignment(0.0, 0.5)
         eng_box.pack_start(self._engine_status_lbl, False, False, 4)
 
-        nb.append_page(eng_box, Gtk.Label(label="  Engine  "))
+        self._nb.append_page(eng_box, Gtk.Label(label="  Engine  "))
 
         # Tab 3: History & Shortcuts
         hist_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -941,7 +955,7 @@ class PopupPanel(Gtk.Window):
 
         hist_box.pack_start(sh_frame, False, False, 4)
 
-        nb.append_page(hist_box, Gtk.Label(label="  History  "))
+        self._nb.append_page(hist_box, Gtk.Label(label="  History  "))
 
         # Tab 4: Models
         models_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -963,7 +977,7 @@ class PopupPanel(Gtk.Window):
         self._models_flow = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         models_box.pack_start(self._models_flow, True, True, 4)
 
-        nb.append_page(models_box, Gtk.Label(label="  Models  "))
+        self._nb.append_page(models_box, Gtk.Label(label="  Models  "))
 
         # ── Footer ──────────────────────────────────────────────────────────
         footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
@@ -1116,6 +1130,11 @@ class PopupPanel(Gtk.Window):
     # ---- Public API --------------------------------------------------------
     def show(self):
         self.show_all()
+        # Front the Live transcript tab on every open (immediate feedback).
+        try:
+            self._nb.set_current_page(self._live_page_index)
+        except Exception:  # noqa: BLE001
+            pass
         # Position bottom-right
         screen = Gdk.Screen.get_default()
         sw = screen.get_width()
@@ -1147,6 +1166,10 @@ class PopupPanel(Gtk.Window):
         if state == "DICTATING":
             GLib.idle_add(self._start_btn.set_sensitive, False)
             GLib.idle_add(self._stop_btn.set_sensitive, True)
+            # Auto-front the panel for non-streaming engines (VOSK) so the user
+            # sees the live transcript immediately.
+            if should_auto_show(engine, self._cfg):
+                GLib.idle_add(self.show)
         else:
             GLib.idle_add(self._start_btn.set_sensitive, True)
             GLib.idle_add(self._stop_btn.set_sensitive, False)
