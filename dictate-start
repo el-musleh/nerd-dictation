@@ -235,13 +235,18 @@ elif [ "$USE_WHISPER" = "true" ]; then
     if [ "$WHISPER_DAEMON_MODE" = "ipc" ]; then
         DAEMON_MODE_ARGS+=(--whisper-socket "$WHISPER_SOCKET")
     fi
+    # honor DICTATION_TARGET config settings
+    WHISPER_TOOL_ACTUAL="$WHISPER_TOOL"
+    if [ "$DICTATION_TARGET" = "Clipboard" ]; then
+        WHISPER_TOOL_ACTUAL="STDOUT"
+    fi
     # Logs go to /tmp/nerd-dictation-ar.log — check this file to debug Arabic issues
     "$NERD_DICTATION" begin \
         --engine WHISPER \
         --whisper-model "$WHISPER_MODEL" \
         --whisper-device "$WHISPER_DEVICE" \
         --language "$WHISPER_LANG" \
-        --simulate-input-tool "$WHISPER_TOOL" \
+        --simulate-input-tool "$WHISPER_TOOL_ACTUAL" \
         --input "$INPUT_METHOD" \
         --timeout=$TIMEOUT \
         "${DAEMON_MODE_ARGS[@]}" \
@@ -252,6 +257,11 @@ else
     if [ "${MODEL_SUPPORTS_GRAMMAR:-false}" = "true" ] && [ -n "$VOSK_GRAMMAR" ] && [ -f "$VOSK_GRAMMAR" ]; then
         VOSK_GRAMMAR_ARGS=(--vosk-grammar-file "$VOSK_GRAMMAR")
     fi
+    # honor DICTATION_TARGET config settings
+    VOSK_OUTPUT_METHOD="SIMULATE_INPUT"
+    if [ "$DICTATION_TARGET" = "Clipboard" ]; then
+        VOSK_OUTPUT_METHOD="STDOUT"
+    fi
     # Logs go to /tmp/nerd-dictation-en.log — check this file to debug English issues
     if [ "${VAD_GATE:-off}" = "on" ] && command -v parec &>/dev/null; then
         # VAD-gated capture: parec -> Silero VAD gate -> nerd-dictation (reads stdin).
@@ -261,12 +271,14 @@ else
                 --vosk-model-dir="$MODEL_DIR" \
                 --input VADPIPE \
                 --timeout=$VOSK_TIMEOUT \
+                --output "$VOSK_OUTPUT_METHOD" \
                 "${VOSK_GRAMMAR_ARGS[@]}" --verbose 1 >> /tmp/nerd-dictation-en.log 2>&1 &
     else
         "$NERD_DICTATION" begin \
             --vosk-model-dir="$MODEL_DIR" \
             --input "$INPUT_METHOD" \
             --timeout=$VOSK_TIMEOUT \
+            --output "$VOSK_OUTPUT_METHOD" \
             "${VOSK_GRAMMAR_ARGS[@]}" --verbose 1 >> /tmp/nerd-dictation-en.log 2>&1 &
     fi
 fi

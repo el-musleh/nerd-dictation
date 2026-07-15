@@ -778,11 +778,27 @@ class PopupPanel(Gtk.Window):
         self._mic_cb.connect("changed", lambda cb: self._save_config())
         form.attach(self._mic_cb, 1, 3, 1, 1)
 
+        # Target Output Dropdown
+        lbl_target = Gtk.Label(label="Target Output:")
+        lbl_target.set_alignment(0.0, 0.5)
+        form.attach(lbl_target, 0, 4, 1, 1)
+        self._target_cb = Gtk.ComboBoxText()
+        self._target_cb.append_text("Typist (xdotool)")
+        self._target_cb.append_text("Clipboard")
+        self._target_cb.append_text("Both")
+        curr_target = self._cfg.get("DICTATION_TARGET", "Typist (xdotool)")
+        if curr_target in ["Typist (xdotool)", "Clipboard", "Both"]:
+            self._target_cb.set_active(["Typist (xdotool)", "Clipboard", "Both"].index(curr_target))
+        else:
+            self._target_cb.set_active(0)
+        self._target_cb.connect("changed", lambda cb: self._save_config())
+        form.attach(self._target_cb, 1, 4, 1, 1)
+
         # VAD checkbox
         self._vad_cb = Gtk.CheckButton(label="VAD Gate (Silero)")
         self._vad_cb.set_active(self._cfg.get("VAD_GATE", "off") == "on")
         self._vad_cb.connect("toggled", lambda cb: self._save_config())
-        form.attach(self._vad_cb, 0, 4, 2, 1)
+        form.attach(self._vad_cb, 0, 5, 2, 1)
 
         eng_box.pack_start(form, False, False, 4)
 
@@ -910,6 +926,7 @@ class PopupPanel(Gtk.Window):
         timeout = str(int(self._timeout_spin.get_value()))
         vad = "on" if self._vad_cb.get_active() else "off"
         mic = self._mic_cb.get_active_text() or "default"
+        target = self._target_cb.get_active_text() or "Typist (xdotool)"
 
         write_config_key("ENGLISH_ENGINE", engine)
         write_config_key("ENGLISH_WHISPER_MODEL", en_model)
@@ -917,6 +934,7 @@ class PopupPanel(Gtk.Window):
         write_config_key("VOSK_TIMEOUT", timeout)
         write_config_key("VAD_GATE", vad)
         write_config_key("AUDIO_DEVICE", mic)
+        write_config_key("DICTATION_TARGET", target)
 
         self._engine_status_lbl.set_markup("<span foreground='#43e97b'>✓ Saved — takes effect next dictation</span>")
         GLib.timeout_add_seconds(3, self._clear_save_status)
@@ -983,6 +1001,13 @@ class PopupPanel(Gtk.Window):
             # Auto scroll to bottom
             mark = buf.create_mark(None, buf.get_end_iter(), False)
             self._live_text.scroll_to_mark(mark, 0.0, True, 0.0, 1.0)
+
+            # Copy to clipboard if config targets Clipboard or Both
+            target = self._cfg.get("DICTATION_TARGET", "Typist (xdotool)")
+            if target in ["Clipboard", "Both"]:
+                joined_text = " ".join(new_text)
+                clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+                clipboard.set_text(joined_text, -1)
 
         return True
 
