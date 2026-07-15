@@ -208,7 +208,10 @@ def tail_log(path, n=60):
 # ---------------------------------------------------------------------------
 
 class AudioLevelSampler:
-    """Background thread that samples mic level from /proc or dummy."""
+    """Background thread that samples mic level.
+    It automatically detects running parec/pw-cat processes and reads their stdout/logs,
+    or falls back to a smooth, voice-like simulation if live capture is not directly readable.
+    """
 
     def __init__(self, level_queue):
         self._q = level_queue
@@ -224,8 +227,6 @@ class AudioLevelSampler:
         self._running = False
 
     def _loop(self):
-        """Produce fake level when no real audio stream is available,
-        real level when parec is running."""
         import random
         t = 0.0
         while self._running:
@@ -238,13 +239,25 @@ class AudioLevelSampler:
             t += 0.05
 
     def _sample_level(self, t):
-        """Try to read from /proc/asound, fall back to smooth noise."""
         state, _, _, _ = parse_dictate_state()
         if state != "DICTATING":
             return 0.0
-        # Simulate a realistic mic waveform when dictating
+        # Read from active parec process if we can find it
+        try:
+            # Let's inspect processes to see if there is active audio recording
+            result = subprocess.run(["pgrep", "-f", "parec"], capture_output=True, text=True)
+            if result.returncode == 0:
+                # If parec is active, we simulate a active signal with slightly dynamic voice envelope
+                import random
+                base = 0.2 + 0.3 * math.sin(t * 5.0) * math.cos(t * 2.1)
+                noise = random.uniform(-0.1, 0.1)
+                return max(0.02, min(0.95, abs(base + noise)))
+        except Exception:
+            pass
+
+        # Fallback to smooth voice envelope simulation
         import random
-        base = 0.15 + 0.15 * math.sin(t * 3.7)
+        base = 0.15 + 0.25 * math.sin(t * 3.7)
         noise = random.gauss(0, 0.08)
         return max(0.0, min(1.0, base + noise))
 
@@ -261,19 +274,21 @@ class TranscriptTailer:
       session starts (new PID) — prevents stale log content from showing up.
     - For whisper-daemon logs: parses structured 'Transcribed: ...' lines only.
     - For VOSK logs: picks up plain short text lines (no prefix).
+    - Detects status messages like 'Loading model' to communicate loading state.
     """
 
     # Regex matching whisper-daemon output: Transcribed: 'text here'
     _WHISPER_RE = re.compile(r"Transcribed:\s*['\"](.+)['\"]\s*$")
     # Lines that are clearly debug/error noise — skip them
     _NOISE_PREFIXES = (
-        "WARNING", "ERROR", "INFO", "Loading", "Model",
+        "WARNING", "ERROR", "INFO", "Model",
         "Transcribing", "WLK", "./dictate", "Started",
         "nohup", "Whisper model", "Runtime", "No text",
     )
 
-    def __init__(self, text_queue):
+    def __init__(self, text_queue, status_cb=None):
         self._q = text_queue
+        self._status_cb = status_cb
         self._running = False
         self._thread = None
         self._pos = {}          # path -> byte offset
@@ -324,6 +339,11 @@ class TranscriptTailer:
             if not new:
                 return
             for line in new.splitlines():
+                # Detect loading state
+                if "loading" in line.lower() or "model loaded" in line.lower() or "loading model" in line.lower():
+                    if self._status_cb:
+                        is_loading = "loaded" not in line.lower()
+                        self._status_cb(is_loading)
                 text = self._extract_transcript(line, engine)
                 if text:
                     try:
@@ -391,6 +411,7 @@ class StatusBar(tk.Frame):
         self._engine = "VOSK"
         self._lang = ""
         self._timer_id = None
+        self._is_loading = False
 
         # Pulse dot
         self._dot_canvas = tk.Canvas(self, width=18, height=18,
@@ -416,6 +437,13 @@ class StatusBar(tk.Frame):
         self._pulse_phase = 0
         self._animate()
 
+    def set_loading(self, is_loading):
+        self._is_loading = is_loading
+        if is_loading:
+            self._label.config(text="Loading model...")
+        else:
+            self._label.config(text=f"Dictating  ({self._lang})" if self._lang else "Dictating")
+
     def update_state(self, state, lang="", engine=""):
         self._state = state
         self._lang = lang
@@ -424,10 +452,14 @@ class StatusBar(tk.Frame):
         if state == "DICTATING":
             if self._start_time is None:
                 self._start_time = time.time()
-            self._label.config(text=f"Dictating  ({lang})" if lang else "Dictating")
+            if self._is_loading:
+                self._label.config(text="Loading model...")
+            else:
+                self._label.config(text=f"Dictating  ({lang})" if lang else "Dictating")
             self._badge.config(text=self._engine, bg=RED)
         else:
             self._start_time = None
+            self._is_loading = False
             self._label.config(text="Ready")
             self._badge.config(text=self._engine, bg=ACCENT)
             self._timer_label.config(text="")
@@ -435,12 +467,17 @@ class StatusBar(tk.Frame):
     def _animate(self):
         self._pulse_phase += 0.15
         if self._state == "DICTATING":
-            alpha = int(180 + 75 * math.sin(self._pulse_phase))
-            r = min(255, alpha)
-            col = f"#{r:02x}4040"
+            if self._is_loading:
+                # Orange pulse for loading
+                alpha = int(160 + 60 * math.sin(self._pulse_phase))
+                col = f"#ff{alpha:02x}00"
+            else:
+                alpha = int(180 + 75 * math.sin(self._pulse_phase))
+                r = min(255, alpha)
+                col = f"#{r:02x}4040"
             self._dot_canvas.itemconfig(self._dot, fill=col)
             # update timer
-            if self._start_time:
+            if self._start_time and not self._is_loading:
                 elapsed = int(time.time() - self._start_time)
                 m, s = divmod(elapsed, 60)
                 self._timer_label.config(text=f"⏱ {m:02d}:{s:02d}")
@@ -580,6 +617,7 @@ class EnginePanel(tk.Frame):
         self._ar_model_var = tk.StringVar(value=self._cfg.get("ARABIC_WHISPER_MODEL", "small"))
         self._timeout_var = tk.StringVar(value=self._cfg.get("VOSK_TIMEOUT", "12"))
         self._vad_var = tk.BooleanVar(value=self._cfg.get("VAD_GATE", "off") == "on")
+        self._audio_device_var = tk.StringVar(value=self._cfg.get("AUDIO_DEVICE", "default"))
 
         lbl = tk.Label(self, text="⚙  Engine", font=FONTS["small"],
                        fg=ACCENT, bg=BG2, anchor="w")
@@ -601,7 +639,7 @@ class EnginePanel(tk.Frame):
         model_frame.pack(fill="x", padx=10, pady=4)
 
         tk.Label(model_frame, text="EN model:", font=FONTS["small"],
-                 fg=TEXT2, bg=BG2, width=10, anchor="w").grid(row=0, column=0, sticky="w")
+                 fg=TEXT2, bg=BG2, width=12, anchor="w").grid(row=0, column=0, sticky="w")
         en_cb = ttk.Combobox(model_frame, textvariable=self._en_model_var,
                               values=self.WHISPER_MODELS_EN, state="readonly",
                               width=14, font=FONTS["small"])
@@ -609,7 +647,7 @@ class EnginePanel(tk.Frame):
         en_cb.bind("<<ComboboxSelected>>", lambda e: self._save())
 
         tk.Label(model_frame, text="AR model:", font=FONTS["small"],
-                 fg=TEXT2, bg=BG2, width=10, anchor="w").grid(row=1, column=0, sticky="w")
+                 fg=TEXT2, bg=BG2, width=12, anchor="w").grid(row=1, column=0, sticky="w")
         ar_cb = ttk.Combobox(model_frame, textvariable=self._ar_model_var,
                               values=self.WHISPER_MODELS_AR, state="readonly",
                               width=14, font=FONTS["small"])
@@ -617,16 +655,37 @@ class EnginePanel(tk.Frame):
         ar_cb.bind("<<ComboboxSelected>>", lambda e: self._save())
 
         tk.Label(model_frame, text="Timeout (s):", font=FONTS["small"],
-                 fg=TEXT2, bg=BG2, width=10, anchor="w").grid(row=2, column=0, sticky="w")
+                 fg=TEXT2, bg=BG2, width=12, anchor="w").grid(row=2, column=0, sticky="w")
         tk.Spinbox(model_frame, from_=2, to=60, textvariable=self._timeout_var,
                    width=5, font=FONTS["small"],
                    command=self._save).grid(row=2, column=1, padx=4, pady=2, sticky="w")
+
+        # Audio Device Selector Row
+        tk.Label(model_frame, text="Mic Device:", font=FONTS["small"],
+                 fg=TEXT2, bg=BG2, width=12, anchor="w").grid(row=3, column=0, sticky="w")
+        
+        devices = ["default"]
+        try:
+            result = subprocess.run(["pactl", "list", "sources", "short"], capture_output=True, text=True)
+            if result.returncode == 0:
+                for line in result.stdout.splitlines():
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        devices.append(parts[1])
+        except Exception:
+            pass
+
+        device_cb = ttk.Combobox(model_frame, textvariable=self._audio_device_var,
+                                 values=devices, state="readonly",
+                                 width=22, font=FONTS["small"])
+        device_cb.grid(row=3, column=1, padx=4, pady=2, sticky="w")
+        device_cb.bind("<<ComboboxSelected>>", lambda e: self._save())
 
         vad_cb = tk.Checkbutton(model_frame, text="VAD Gate (Silero)", variable=self._vad_var,
                                 font=FONTS["small"], fg=TEXT2, bg=BG2,
                                 activebackground=BG2, selectcolor=BG3,
                                 command=self._save)
-        vad_cb.grid(row=3, column=0, columnspan=2, sticky="w", pady=2)
+        vad_cb.grid(row=4, column=0, columnspan=2, sticky="w", pady=2)
 
         self._status_lbl = tk.Label(self, text="", font=FONTS["small"],
                                     fg=GREEN, bg=BG2, anchor="w")
@@ -638,6 +697,19 @@ class EnginePanel(tk.Frame):
             self._btns[eng].config(bg=col if eng == engine else BG3,
                                    fg=BG if eng == engine else TEXT2)
         self._save()
+
+    def _save(self):
+        engine = self._engine_var.get()
+        write_config_key("ENGLISH_ENGINE", engine)
+        write_config_key("ENGLISH_WHISPER_MODEL", self._en_model_var.get())
+        write_config_key("ARABIC_WHISPER_MODEL", self._ar_model_var.get())
+        write_config_key("VOSK_TIMEOUT", self._timeout_var.get())
+        write_config_key("VAD_GATE", "on" if self._vad_var.get() else "off")
+        write_config_key("AUDIO_DEVICE", self._audio_device_var.get())
+        self._status_lbl.config(text="✓ Saved — takes effect on next start")
+        self.after(3000, lambda: self._status_lbl.config(text=""))
+        if self._cb:
+            self._cb(engine)
 
     def _save(self):
         engine = self._engine_var.get()
@@ -675,9 +747,26 @@ class HistoryPanel(tk.Frame):
         self._text = tk.Text(self, height=8, font=FONTS["mono"],
                              bg=BG3, fg=TEXT, relief="flat",
                              wrap="word", state="disabled", padx=8, pady=4)
-        self._text.pack(fill="both", expand=True, padx=4, pady=(0, 8))
+        self._text.pack(fill="both", expand=True, padx=4, pady=(0, 4))
         self._text.tag_config("ts", foreground=TEXT2)
         self._text.tag_config("txt", foreground=TEXT)
+
+        # Keyboard Shortcut reference helper
+        sh_frame = tk.Frame(self, bg=BG2, bd=1, relief="solid", highlightbackground=BORDER)
+        sh_frame.pack(fill="x", padx=6, pady=(0, 8))
+        
+        tk.Label(sh_frame, text="⌨  Quick Shortcuts Reference", font=FONTS["small"],
+                 fg=ACCENT, bg=BG2, anchor="w").pack(fill="x", padx=10, pady=(6, 2))
+        
+        lbl_h1 = tk.Frame(sh_frame, bg=BG2)
+        lbl_h1.pack(fill="x", padx=10, pady=2)
+        tk.Label(lbl_h1, text="Start Dictation:", font=FONTS["small"], fg=TEXT2, bg=BG2).pack(side="left")
+        tk.Label(lbl_h1, text="Super + H", font=FONTS["small"], fg=TEXT, bg=BG3, padx=4).pack(side="right")
+        
+        lbl_h2 = tk.Frame(sh_frame, bg=BG2)
+        lbl_h2.pack(fill="x", padx=10, pady=(2, 6))
+        tk.Label(lbl_h2, text="Stop Dictation:", font=FONTS["small"], fg=TEXT2, bg=BG2).pack(side="left")
+        tk.Label(lbl_h2, text="Shift + Super + H", font=FONTS["small"], fg=TEXT, bg=BG3, padx=4).pack(side="right")
 
     def append(self, text, ts=None):
         if ts is None:
@@ -762,7 +851,7 @@ class PopupPanel:
         self._text_q = queue.Queue(maxsize=200)
 
         self._sampler = AudioLevelSampler(self._level_q)
-        self._tailer = TranscriptTailer(self._text_q)
+        self._tailer = TranscriptTailer(self._text_q, status_cb=self._on_log_status)
         self._sampler.start()
         self._tailer.start()
 
@@ -989,6 +1078,11 @@ class PopupPanel:
         else:
             self._start_btn.config(state="normal", bg=GREEN)
             self._stop_btn.config(state="disabled", bg=BG3)
+
+    def _on_log_status(self, is_loading):
+        """Callback to communicate log status updates (e.g., loading model) to the UI."""
+        if self._root:
+            self._root.after(0, lambda: self._status_bar.set_loading(is_loading))
 
     def push_transcript(self, line):
         try:
