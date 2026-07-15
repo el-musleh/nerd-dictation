@@ -697,7 +697,8 @@ class PopupPanel(Gtk.Window):
 
         btn_settings = Gtk.Button(label="⚙  Settings")
         btn_settings.get_style_context().add_class("btn-settings")
-        btn_settings.connect("clicked", lambda w: run_script(os.path.join(STT_DIR, "stt-settings.sh")))
+        # Open the in-panel Settings tab (single source of truth).
+        btn_settings.connect("clicked", lambda w: self._nb.set_current_page(self._settings_page_index))
         ctrl_box.pack_end(btn_settings, False, False, 0)
         main_box.pack_start(ctrl_box, False, False, 4)
 
@@ -979,6 +980,10 @@ class PopupPanel(Gtk.Window):
 
         self._nb.append_page(models_box, Gtk.Label(label="  Models  "))
 
+        # Settings tab (single source of truth for all config keys)
+        self._build_settings_tab()
+        self._settings_page_index = self._nb.get_n_pages() - 1
+
         # ── Footer ──────────────────────────────────────────────────────────
         footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         footer.set_size_request(-1, 32)
@@ -990,7 +995,118 @@ class PopupPanel(Gtk.Window):
         footer.pack_start(lbl_foot, True, True, 4)
         main_box.pack_start(footer, False, False, 0)
 
-    # ---- Button Actions ----------------------------------------------------
+    # ---- Settings tab (single source of truth) -----------------------------
+    def _cb(self, items, current, key, transform=str):
+        cb = Gtk.ComboBoxText()
+        for it in items:
+            cb.append_text(it)
+        if current in items:
+            cb.set_active(items.index(current))
+        else:
+            cb.set_active(0)
+        self._bind_setting(cb, key, lambda w: transform(w.get_active_text()), "changed")
+        return cb
+
+    def _spin(self, lower, upper, step, current, key):
+        sp = Gtk.SpinButton.new_with_range(lower, upper, step)
+        try:
+            sp.set_value(float(current))
+        except (TypeError, ValueError):
+            sp.set_value(lower)
+        self._bind_setting(sp, key, lambda w: str(int(w.get_value()) if step >= 1 else w.get_value()), "value-changed")
+        return sp
+
+    def _check(self, current, key):
+        chk = Gtk.CheckButton(label="")
+        chk.set_active(str(current).lower() == "on")
+        self._bind_setting(chk, key, lambda w: "on" if w.get_active() else "off", "toggled")
+        return chk
+
+    def _entry(self, current, key):
+        en = Gtk.Entry()
+        en.set_text(current or "")
+        self._bind_setting(en, key, lambda w: w.get_text(), "changed")
+        return en
+
+    def _row(self, box, label, widget):
+        h = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        lbl = Gtk.Label(label=label)
+        lbl.set_alignment(0.0, 0.5)
+        lbl.set_size_request(140, -1)
+        h.pack_start(lbl, False, False, 0)
+        h.pack_start(widget, True, True, 0)
+        box.pack_start(h, False, False, 4)
+
+    def _build_settings_tab(self):
+        cfg = self._cfg
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        box.set_margin_top(8); box.set_margin_bottom(8)
+        box.set_margin_start(12); box.set_margin_end(12)
+        scroll = Gtk.ScrolledWindow()
+        box.pack_start(scroll, True, True, 0)
+        inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        scroll.add(inner)
+
+        # Engine + models
+        self._row(inner, "Engine:", self._cb(["VOSK", "WHISPER", "WLK"],
+                    cfg.get("ENGLISH_ENGINE", "VOSK"), "ENGLISH_ENGINE"))
+        self._row(inner, "EN model:", self._cb(
+                    EnginePanel_mock.WHISPER_MODELS_EN,
+                    cfg.get("ENGLISH_WHISPER_MODEL", "small.en"), "ENGLISH_WHISPER_MODEL"))
+        self._row(inner, "AR model:", self._cb(
+                    EnginePanel_mock.WHISPER_MODELS_AR,
+                    cfg.get("ARABIC_WHISPER_MODEL", "small"), "ARABIC_WHISPER_MODEL"))
+
+        # Timing / device / target
+        self._row(inner, "VOSK timeout (s):", self._spin(2, 60, 1,
+                    cfg.get("VOSK_TIMEOUT", "12"), "VOSK_TIMEOUT"))
+        self._row(inner, "Mic device:", self._entry(cfg.get("AUDIO_DEVICE", ""), "AUDIO_DEVICE"))
+        self._row(inner, "Target output:", self._cb(
+                    ["Typist (xdotool)", "Clipboard", "Both"],
+                    cfg.get("DICTATION_TARGET", "Typist (xdotool)"), "DICTATION_TARGET"))
+
+        # VAD / punctuation
+        self._row(inner, "VAD gate:", self._cb(["off", "on"],
+                    cfg.get("VAD_GATE", "off"), "VAD_GATE"))
+        self._row(inner, "VAD threshold:", self._spin(0.1, 0.9, 0.05,
+                    cfg.get("VAD_THRESHOLD", "0.5"), "VAD_THRESHOLD"))
+        self._row(inner, "VAD min-silence (ms):", self._spin(100, 1000, 50,
+                    cfg.get("VAD_MIN_SILENCE_MS", "300"), "VAD_MIN_SILENCE_MS"))
+        self._row(inner, "Punctuate:", self._cb(["off", "on"],
+                    cfg.get("PUNCTUATE", "off"), "PUNCTUATE"))
+
+        # WLK streaming
+        self._row(inner, "WLK policy:", self._cb(
+                    ["localagreement", "simulstreaming"],
+                    cfg.get("WLK_POLICY", "localagreement"), "WLK_POLICY"))
+        self._row(inner, "WLK chunk (s):", self._spin(0.1, 0.5, 0.05,
+                    cfg.get("WLK_CHUNK", "0.25"), "WLK_CHUNK"))
+        self._row(inner, "Auto language:", self._cb(["off", "on"],
+                    cfg.get("AUTO_LANG", "off"), "AUTO_LANG"))
+
+        # Whisper
+        self._row(inner, "Compute type:", self._cb(
+                    ["int8", "int8_float16", "float16"],
+                    cfg.get("COMPUTE_TYPE", "int8"), "COMPUTE_TYPE"))
+
+        # Export / autosave / clipboard
+        self._row(inner, "Output format:", self._cb(
+                    ["srt", "vtt", "json", "text"],
+                    cfg.get("OUTPUT_FORMAT", "srt"), "OUTPUT_FORMAT"))
+        self._row(inner, "Autosave path:", self._entry(cfg.get("AUTOSAVE_PATH", ""), "AUTOSAVE_PATH"))
+        self._row(inner, "Copy on stop:", self._cb(["off", "on"],
+                    cfg.get("COPY_ON_STOP", "off"), "COPY_ON_STOP"))
+
+        # Advanced
+        self._row(inner, "Per-lang models:", self._entry(cfg.get("LANG_MODELS", ""), "LANG_MODELS"))
+        self._row(inner, "Panel in taskbar:", self._cb(["off", "on"],
+                    cfg.get("PANEL_IN_TASKBAR", "off"), "PANEL_IN_TASKBAR"))
+
+        self._settings_status = Gtk.Label(label="Changes save instantly · take effect next dictation")
+        self._settings_status.get_style_context().add_class("text-muted")
+        box.pack_start(self._settings_status, False, False, 4)
+        self._nb.append_page(box, Gtk.Label(label="  Settings  "))
+
     def _do_start(self):
         if self._on_start:
             self._on_start()
@@ -1032,6 +1148,19 @@ class PopupPanel(Gtk.Window):
     def _clear_save_status(self):
         self._engine_status_lbl.set_text("")
         return False
+
+    def _bind_setting(self, widget, key, get_value, signal):
+        """Bind a widget's change signal to write_config_key(key, value).
+
+        get_value(widget) -> str to store. signal is the GTK signal name
+        ("changed", "value-changed", or "toggled").
+        """
+        def _on_change(*_args):
+            try:
+                write_config_key(key, get_value(widget))
+            except Exception as ex:  # noqa: BLE001
+                sys.stderr.write(f"[popup] bind {key} error: {ex}\n")
+        widget.connect(signal, _on_change)
 
     def _copy_history(self, button):
         clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
