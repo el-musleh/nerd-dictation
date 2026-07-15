@@ -236,7 +236,11 @@ async def run(model: str, language: str) -> None:
 def main():
     ap = argparse.ArgumentParser(description="WhisperLiveKit real-time dictation daemon")
     ap.add_argument("--model", default=os.environ.get("WLK_MODEL", "small"))
-    ap.add_argument("--language", default=os.environ.get("WLK_LANG", "en"))
+    lang = os.environ.get("WLK_LANG", "en")
+    # Auto language detection: let WLK detect per-stream instead of a fixed lang.
+    if os.environ.get("AUTO_LANG", "off") == "on":
+        lang = "auto"
+    ap.add_argument("--language", default=lang)
     args = ap.parse_args()
     try:
         asyncio.run(run(args.model, args.language))

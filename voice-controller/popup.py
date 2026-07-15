@@ -583,18 +583,14 @@ class PopupPanel(Gtk.Window):
 
         self._cfg = read_config()
         self._history_session = []
+        self._cur_state = "IDLE"
+        self._cur_engine = self._cfg.get("ENGLISH_ENGINE", "VOSK")
 
-        # Start Gtk thread
-        self._ready = threading.Event()
-        t = threading.Thread(target=self._gtk_thread, daemon=True)
-        t.start()
-        self._ready.wait(timeout=5)
-
-    def _gtk_thread(self):
         # Initialize Gdk/Gtk thread safety
         GLib.threads_init()
         Gdk.threads_init()
-        
+        Gtk.init(None)
+
         # Load style context
         style_provider = Gtk.CssProvider()
         style_provider.load_from_data(GTK_STYLE)
@@ -607,12 +603,13 @@ class PopupPanel(Gtk.Window):
         self._build_ui()
         self.connect("button-press-event", self._on_button_press)
         self.connect("motion-notify-event", self._on_motion_notify)
-        
         GLib.timeout_add(150, self._poll_queues)
-        self._cur_state = "IDLE"
-        self._cur_engine = self._cfg.get("ENGLISH_ENGINE", "VOSK")
-        self._ready.set()
-        
+
+        # Start Gtk main loop on a daemon thread
+        t = threading.Thread(target=self._gtk_thread, daemon=True)
+        t.start()
+
+    def _gtk_thread(self):
         Gtk.main()
 
     def _build_ui(self):
