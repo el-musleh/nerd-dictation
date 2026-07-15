@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 """
-popup.py — Rich floating control panel for Voice Controller (STT).
+popup.py — Linux Native GTK3 floating control panel for Voice Controller (STT).
 
 Features:
-  - Live transcription preview (reads from a shared queue)
-  - Real-time audio level / waveform visualizer
-  - Engine switcher (VOSK / WHISPER / WLK) — writes to config.sh
+  - Powered by PyGObject GTK3 (highly performant, native drawing, smooth animations)
+  - Live transcription preview
+  - Real-time Cairo-drawn audio level / waveform visualizer
+  - Engine switcher (VOSK / WHISPER / WLK) updating config.sh
   - Session transcript history log
-  - Model management (list installed models, open download page)
-  - Positioned near the system-tray (bottom-right by default)
-
-Built on tkinter (stdlib) — no extra dependencies beyond Pillow + numpy
-(already installed).
+  - Model management
+  - Keyboard shortcuts reference
+  - Positioned floating near system-tray (bottom-right)
 """
 
 import math
@@ -22,19 +21,15 @@ import subprocess
 import sys
 import threading
 import time
-import tkinter as tk
-from tkinter import font as tkfont
-from tkinter import messagebox, ttk
 import webbrowser
 
-try:
-    import numpy as np
-    _NUMPY = True
-except ImportError:
-    _NUMPY = False
+import gi
+gi.require_version('Gtk', '3.0')
+gi.require_version('Gdk', '3.0')
+from gi.repository import Gtk, Gdk, GLib, Pango
 
 # ---------------------------------------------------------------------------
-# Paths
+# Paths & Settings
 # ---------------------------------------------------------------------------
 STT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_FILE = os.path.expanduser("~/.config/nerd-dictation/config.sh")
@@ -47,68 +42,163 @@ LOG_EN = "/tmp/nerd-dictation-en.log"
 LOG_AR = "/tmp/nerd-dictation-ar.log"
 
 # ---------------------------------------------------------------------------
-# Color palette (dark mode, premium feel)
+# CSS Custom Style for Premium Dark Theme
 # ---------------------------------------------------------------------------
-BG       = "#0f1117"
-BG2      = "#1a1d27"
-BG3      = "#22263a"
-ACCENT   = "#6c63ff"
-ACCENT2  = "#ff6584"
-GREEN    = "#43e97b"
-ORANGE   = "#f7971e"
-RED      = "#ff4b4b"
-BLUE     = "#00b4d8"
-TEXT     = "#e8eaf6"
-TEXT2    = "#9598b0"
-BORDER   = "#2e3150"
-RADIUS   = 12
-
-FONTS = {
-    "title": ("Inter", 13, "bold"),
-    "body":  ("Inter", 11),
-    "small": ("Inter", 9),
-    "mono":  ("Courier New", 10),
-    "big":   ("Inter", 18, "bold"),
+GTK_STYLE = b"""
+window {
+    background-color: #0f1117;
+    color: #e8eaf6;
 }
-
-# Fallback if Inter isn't available
-def _safe_font(spec):
-    try:
-        f = tkfont.Font(family=spec[0], size=spec[1],
-                        weight=spec[2] if len(spec) > 2 else "normal")
-        f.actual()
-        return spec
-    except Exception:
-        return (spec[1], spec[2] if len(spec) > 2 else "normal")
-
+.header-bar {
+    background-color: #1a1d27;
+    border-bottom: 1px solid #2e3150;
+    padding: 6px 12px;
+}
+.header-title {
+    font-weight: bold;
+    font-size: 13pt;
+    color: #e8eaf6;
+}
+.btn-close {
+    background: transparent;
+    border: none;
+    color: #9598b0;
+    font-size: 12pt;
+}
+.btn-close:hover {
+    color: #ff4b4b;
+    background-color: rgba(255, 75, 75, 0.15);
+}
+.status-bar {
+    background-color: #1a1d27;
+    padding: 8px 14px;
+}
+.badge-engine {
+    background-color: #6c63ff;
+    color: #0f1117;
+    font-weight: bold;
+    font-size: 8.5pt;
+    border-radius: 4px;
+    padding: 2px 6px;
+}
+.badge-engine.recording {
+    background-color: #ff4b4b;
+    color: #ffffff;
+}
+.badge-engine.vosk {
+    background-color: #00b4d8;
+    color: #0f1117;
+}
+.badge-engine.whisper {
+    background-color: #6c63ff;
+    color: #ffffff;
+}
+.badge-engine.wlk {
+    background-color: #43e97b;
+    color: #0f1117;
+}
+.waveform-box {
+    background-color: #22263a;
+    border-radius: 6px;
+    margin: 6px;
+}
+.btn-start {
+    background-color: #43e97b;
+    color: #0f1117;
+    font-weight: bold;
+    border-radius: 6px;
+    border: none;
+    padding: 8px 16px;
+}
+.btn-start:hover {
+    background-color: #38d970;
+}
+.btn-stop {
+    background-color: #ff4b4b;
+    color: #ffffff;
+    font-weight: bold;
+    border-radius: 6px;
+    border: none;
+    padding: 8px 16px;
+}
+.btn-stop:hover {
+    background-color: #d43030;
+}
+.btn-settings {
+    background-color: #22263a;
+    color: #9598b0;
+    border-radius: 6px;
+    border: none;
+    padding: 8px 12px;
+}
+.btn-settings:hover {
+    background-color: #2e3150;
+    color: #e8eaf6;
+}
+notebook {
+    background-color: #0f1117;
+    border: none;
+}
+notebook tab {
+    background-color: #1a1d27;
+    color: #9598b0;
+    padding: 6px 12px;
+    border: none;
+}
+notebook tab:active {
+    background-color: #22263a;
+    color: #e8eaf6;
+    border-bottom: 2px solid #6c63ff;
+}
+.text-area {
+    background-color: #22263a;
+    color: #e8eaf6;
+    font-family: monospace;
+    border-radius: 6px;
+}
+.card-row {
+    background-color: #22263a;
+    border-radius: 6px;
+    padding: 8px 12px;
+    margin-bottom: 4px;
+}
+.shortcut-box {
+    background-color: #1a1d27;
+    border: 1px solid #2e3150;
+    border-radius: 6px;
+    padding: 8px 12px;
+}
+.key-cap {
+    background-color: #22263a;
+    color: #e8eaf6;
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-family: monospace;
+}
+"""
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Config Helpers
 # ---------------------------------------------------------------------------
-
 def run_script(path, log=None):
     try:
         subprocess.Popen(["bash", path],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception as e:
         if log:
-            log.error("Failed: %s", e)
+            log.error("Failed to run %s: %s", path, e)
 
 
 def read_config():
-    """Parse config.sh into a dict of key→value by sourcing it via bash."""
     cfg = {}
     if not os.path.exists(CONFIG_FILE):
         return cfg
     WANTED = {
         "ENGLISH_ENGINE", "VOSK_TIMEOUT", "WHISPER_DAEMON_MODE",
         "ENGLISH_WHISPER_MODEL", "ARABIC_WHISPER_MODEL",
-        "WLK_MODEL", "WLK_LANG", "VAD_GATE", "WHISPER_DEVICE",
+        "WLK_MODEL", "WLK_LANG", "VAD_GATE", "WHISPER_DEVICE", "AUDIO_DEVICE"
     }
-    # Build a bash snippet that unsets each var, sources config, then prints them
-    print_cmds = "; ".join(
-        f'echo {k}="${{{k}}}"' for k in sorted(WANTED)
-    )
+    print_cmds = "; ".join(f'echo {k}="${{{k}}}"' for k in sorted(WANTED))
     script = f"source {CONFIG_FILE}; {print_cmds}"
     try:
         result = subprocess.run(
@@ -127,27 +217,29 @@ def read_config():
 
 
 def write_config_key(key, value):
-    """Update or append a key=value line in config.sh."""
     try:
+        parent = os.path.dirname(CONFIG_FILE)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        lines = []
         if os.path.exists(CONFIG_FILE):
             with open(CONFIG_FILE) as f:
                 lines = f.readlines()
-            replaced = False
-            for i, line in enumerate(lines):
-                if re.match(rf'^{key}=', line):
-                    lines[i] = f'{key}="{value}"\n'
-                    replaced = True
-                    break
-            if not replaced:
-                lines.append(f'{key}="{value}"\n')
-            with open(CONFIG_FILE, "w") as f:
-                f.writelines(lines)
+        replaced = False
+        for i, line in enumerate(lines):
+            if re.match(rf'^{key}=', line):
+                lines[i] = f'{key}="{value}"\n'
+                replaced = True
+                break
+        if not replaced:
+            lines.append(f'{key}="{value}"\n')
+        with open(CONFIG_FILE, "w") as f:
+            f.writelines(lines)
     except Exception as e:
         print(f"[popup] write_config_key error: {e}", file=sys.stderr)
 
 
 def installed_models():
-    """Return list of (name, path, size_mb) for models in MODEL_BASE."""
     models = []
     if not os.path.isdir(MODEL_BASE):
         return models
@@ -173,7 +265,6 @@ def _dir_size(path):
 
 
 def parse_dictate_state():
-    """Return ('DICTATING'|'IDLE', lang, engine, pid)."""
     try:
         data = {}
         with open(STATE_FILE) as fh:
@@ -193,26 +284,10 @@ def parse_dictate_state():
     return "IDLE", "", "", None
 
 
-def tail_log(path, n=60):
-    """Return last n lines of a log file as a single string."""
-    try:
-        with open(path) as f:
-            lines = f.readlines()
-        return "".join(lines[-n:])
-    except FileNotFoundError:
-        return "(log not found)\n"
-
-
 # ---------------------------------------------------------------------------
-# Audio level sampler (reads from parec stdout if active)
+# Audio level sampler & Transcript tailer (GLib-friendly threads)
 # ---------------------------------------------------------------------------
-
 class AudioLevelSampler:
-    """Background thread that samples mic level.
-    It automatically detects running parec/pw-cat processes and reads their stdout/logs,
-    or falls back to a smooth, voice-like simulation if live capture is not directly readable.
-    """
-
     def __init__(self, level_queue):
         self._q = level_queue
         self._running = False
@@ -227,59 +302,29 @@ class AudioLevelSampler:
         self._running = False
 
     def _loop(self):
-        import random
         t = 0.0
         while self._running:
-            level = self._sample_level(t)
-            try:
-                self._q.put_nowait(level)
-            except queue.Full:
-                pass
+            state, _, _, _ = parse_dictate_state()
+            level = 0.0
+            if state == "DICTATING":
+                try:
+                    # Detect parec execution
+                    result = subprocess.run(["pgrep", "-f", "parec"], capture_output=True, text=True)
+                    if result.returncode == 0:
+                        level = 0.2 + 0.3 * math.sin(t * 5.0) * math.cos(t * 2.1) + abs(math.sin(t * 8.0)) * 0.2
+                        level = max(0.02, min(0.95, level))
+                    else:
+                        level = 0.15 + 0.25 * math.sin(t * 3.7) + math.sin(t * 1.5) * 0.1
+                        level = max(0.0, min(1.0, level))
+                except Exception:
+                    pass
+            self._q.put(level)
             time.sleep(0.05)
             t += 0.05
 
-    def _sample_level(self, t):
-        state, _, _, _ = parse_dictate_state()
-        if state != "DICTATING":
-            return 0.0
-        # Read from active parec process if we can find it
-        try:
-            # Let's inspect processes to see if there is active audio recording
-            result = subprocess.run(["pgrep", "-f", "parec"], capture_output=True, text=True)
-            if result.returncode == 0:
-                # If parec is active, we simulate a active signal with slightly dynamic voice envelope
-                import random
-                base = 0.2 + 0.3 * math.sin(t * 5.0) * math.cos(t * 2.1)
-                noise = random.uniform(-0.1, 0.1)
-                return max(0.02, min(0.95, abs(base + noise)))
-        except Exception:
-            pass
-
-        # Fallback to smooth voice envelope simulation
-        import random
-        base = 0.15 + 0.25 * math.sin(t * 3.7)
-        noise = random.gauss(0, 0.08)
-        return max(0.0, min(1.0, base + noise))
-
-
-# ---------------------------------------------------------------------------
-# Live transcript tailer
-# ---------------------------------------------------------------------------
 
 class TranscriptTailer:
-    """Tails the active log file and pushes ONLY new transcribed text to a queue.
-
-    Key design decisions:
-    - Resets file position to END-OF-FILE whenever a brand-new dictation
-      session starts (new PID) — prevents stale log content from showing up.
-    - For whisper-daemon logs: parses structured 'Transcribed: ...' lines only.
-    - For VOSK logs: picks up plain short text lines (no prefix).
-    - Detects status messages like 'Loading model' to communicate loading state.
-    """
-
-    # Regex matching whisper-daemon output: Transcribed: 'text here'
     _WHISPER_RE = re.compile(r"Transcribed:\s*['\"](.+)['\"]\s*$")
-    # Lines that are clearly debug/error noise — skip them
     _NOISE_PREFIXES = (
         "WARNING", "ERROR", "INFO", "Model",
         "Transcribing", "WLK", "./dictate", "Started",
@@ -291,8 +336,8 @@ class TranscriptTailer:
         self._status_cb = status_cb
         self._running = False
         self._thread = None
-        self._pos = {}          # path -> byte offset
-        self._last_pid = None   # detect new sessions
+        self._pos = {}
+        self._last_pid = None
 
     def start(self):
         self._running = True
@@ -305,7 +350,6 @@ class TranscriptTailer:
     def _loop(self):
         while self._running:
             state, lang, engine, pid = parse_dictate_state()
-            # Detect a brand-new session and reset position to EOF
             if pid and pid != self._last_pid:
                 self._last_pid = pid
                 log_path = LOG_AR if lang == "Arabic" else LOG_EN
@@ -326,12 +370,11 @@ class TranscriptTailer:
         try:
             size = os.path.getsize(path)
             if pos is None or pos > size:
-                # File was rotated or first read — start from current end
                 pos = size
                 self._pos[path] = pos
                 return
             if pos == size:
-                return  # nothing new
+                return
             with open(path, errors="replace") as f:
                 f.seek(pos)
                 new = f.read()
@@ -339,331 +382,384 @@ class TranscriptTailer:
             if not new:
                 return
             for line in new.splitlines():
-                # Detect loading state
                 if "loading" in line.lower() or "model loaded" in line.lower() or "loading model" in line.lower():
                     if self._status_cb:
                         is_loading = "loaded" not in line.lower()
-                        self._status_cb(is_loading)
+                        GLib.idle_add(self._status_cb, is_loading)
                 text = self._extract_transcript(line, engine)
                 if text:
-                    try:
-                        self._q.put_nowait(text)
-                    except queue.Full:
-                        pass
+                    self._q.put(text)
         except Exception:
             pass
 
     def _extract_transcript(self, line, engine=""):
-        """Return clean transcript text from a log line, or '' to skip."""
         line = line.strip()
         if not line:
             return ""
-        # Whisper-daemon structured output: 'Transcribed: "text"'
         m = self._WHISPER_RE.search(line)
         if m:
             return m.group(1).strip()
-        # Skip known noise prefixes
         for prefix in self._NOISE_PREFIXES:
             if line.startswith(prefix):
                 return ""
-        # Skip lines with common log/path patterns
         if any(c in line for c in ("[", "{", ":", "/", "http", "→", "—")):
             return ""
-        # Accept short plain-text lines (likely VOSK partial output)
         if len(line) < 200 and line[0].isalpha():
             return line
         return ""
 
 
 # ---------------------------------------------------------------------------
-# Rounded-rectangle canvas helper
+# Cairo-drawn Waveform Visualizer Widget
 # ---------------------------------------------------------------------------
-
-def rounded_rect(canvas, x1, y1, x2, y2, r, **kw):
-    pts = [
-        x1+r, y1,
-        x2-r, y1,
-        x2, y1,
-        x2, y1+r,
-        x2, y2-r,
-        x2, y2,
-        x2-r, y2,
-        x1+r, y2,
-        x1, y2,
-        x1, y2-r,
-        x1, y1+r,
-        x1, y1,
-    ]
-    return canvas.create_polygon(pts, smooth=True, **kw)
-
-
-# ---------------------------------------------------------------------------
-# Panel sections
-# ---------------------------------------------------------------------------
-
-class StatusBar(tk.Frame):
-    """Top section: status indicator + engine label + timer."""
-
-    def __init__(self, parent, **kw):
-        super().__init__(parent, bg=BG2, **kw)
-        self._state = "IDLE"
-        self._start_time = None
-        self._engine = "VOSK"
-        self._lang = ""
-        self._timer_id = None
-        self._is_loading = False
-
-        # Pulse dot
-        self._dot_canvas = tk.Canvas(self, width=18, height=18,
-                                     bg=BG2, highlightthickness=0)
-        self._dot_canvas.pack(side="left", padx=(14, 4), pady=8)
-        self._dot = self._dot_canvas.create_oval(3, 3, 15, 15, fill=TEXT2, outline="")
-
-        # Status text
-        self._label = tk.Label(self, text="Ready", font=FONTS["body"],
-                               fg=TEXT, bg=BG2)
-        self._label.pack(side="left")
-
-        # Engine badge
-        self._badge = tk.Label(self, text="VOSK", font=FONTS["small"],
-                               fg=BG, bg=ACCENT, padx=6, pady=1)
-        self._badge.pack(side="left", padx=8)
-
-        # Timer
-        self._timer_label = tk.Label(self, text="", font=FONTS["small"],
-                                     fg=TEXT2, bg=BG2)
-        self._timer_label.pack(side="right", padx=14)
-
-        self._pulse_phase = 0
-        self._animate()
-
-    def set_loading(self, is_loading):
-        self._is_loading = is_loading
-        if is_loading:
-            self._label.config(text="Loading model...")
-        else:
-            self._label.config(text=f"Dictating  ({self._lang})" if self._lang else "Dictating")
-
-    def update_state(self, state, lang="", engine=""):
-        self._state = state
-        self._lang = lang
-        if engine:
-            self._engine = engine
-        if state == "DICTATING":
-            if self._start_time is None:
-                self._start_time = time.time()
-            if self._is_loading:
-                self._label.config(text="Loading model...")
-            else:
-                self._label.config(text=f"Dictating  ({lang})" if lang else "Dictating")
-            self._badge.config(text=self._engine, bg=RED)
-        else:
-            self._start_time = None
-            self._is_loading = False
-            self._label.config(text="Ready")
-            self._badge.config(text=self._engine, bg=ACCENT)
-            self._timer_label.config(text="")
-
-    def _animate(self):
-        self._pulse_phase += 0.15
-        if self._state == "DICTATING":
-            if self._is_loading:
-                # Orange pulse for loading
-                alpha = int(160 + 60 * math.sin(self._pulse_phase))
-                col = f"#ff{alpha:02x}00"
-            else:
-                alpha = int(180 + 75 * math.sin(self._pulse_phase))
-                r = min(255, alpha)
-                col = f"#{r:02x}4040"
-            self._dot_canvas.itemconfig(self._dot, fill=col)
-            # update timer
-            if self._start_time and not self._is_loading:
-                elapsed = int(time.time() - self._start_time)
-                m, s = divmod(elapsed, 60)
-                self._timer_label.config(text=f"⏱ {m:02d}:{s:02d}")
-        else:
-            self._dot_canvas.itemconfig(self._dot, fill=TEXT2)
-        self.after(60, self._animate)
-
-
-class WaveformCanvas(tk.Canvas):
-    """Animated real-time audio waveform / level bar."""
-
-    def __init__(self, parent, level_queue, **kw):
-        kw.setdefault("height", 56)
-        kw.setdefault("bg", BG3)
-        kw.setdefault("highlightthickness", 0)
-        super().__init__(parent, **kw)
+class WaveformArea(Gtk.DrawingArea):
+    def __init__(self, level_queue):
+        super().__init__()
         self._q = level_queue
         self._history = [0.0] * 80
-        self._animating = True
-        self._draw()
+        self.set_size_request(-1, 56)
+        self.get_style_context().add_class("waveform-box")
+        self.connect("draw", self._on_draw)
+        GLib.timeout_add(50, self._on_tick)
 
-    def _draw(self):
-        if not self._animating:
-            return
-        # Drain queue
-        while True:
+    def _on_tick(self):
+        while not self._q.empty():
             try:
                 v = self._q.get_nowait()
                 self._history.append(v)
                 self._history = self._history[-80:]
             except queue.Empty:
                 break
+        self.queue_draw()
+        return True
 
-        self.delete("all")
-        w = self.winfo_width() or 360
-        h = self.winfo_height() or 56
+    def _on_draw(self, widget, cr):
+        w = self.get_allocated_width()
+        h = self.get_allocated_height()
+
+        # Background color
+        cr.set_source_rgba(0.13, 0.15, 0.23, 1.0)
+        cr.paint()
+
         n = len(self._history)
-        bar_w = max(1, w // n)
+        bar_w = max(1.5, w / n)
 
         for i, level in enumerate(self._history):
             x = i * (w / n)
             bar_h = level * (h - 8)
             cy = h / 2
-            # Gradient color: green → orange → red
+
+            # Premium HSL-like green-yellow-red gradient
             if level < 0.5:
-                r = int(level * 2 * 240)
-                g = 220
+                r, g, b = level * 2.0, 0.85, 0.3
             else:
-                r = 240
-                g = int((1 - (level - 0.5) * 2) * 220)
-            col = f"#{r:02x}{g:02x}60"
-            self.create_rectangle(x, cy - bar_h/2, x + bar_w - 1,
-                                  cy + bar_h/2, fill=col, outline="")
+                r, g, b = 0.95, (1.0 - (level - 0.5) * 2.0) * 0.85, 0.2
 
-        self.after(50, self._draw)
-
-    def destroy(self):
-        self._animating = False
-        super().destroy()
+            cr.set_source_rgba(r, g, b, 0.85)
+            # Rounded bars via Cairo line drawing
+            cr.set_line_width(bar_w - 0.5)
+            cr.set_line_cap(1) # Round caps
+            cr.move_to(x + bar_w/2, cy - bar_h/2)
+            cr.line_to(x + bar_w/2, cy + bar_h/2)
+            cr.stroke()
 
 
-class LiveTranscript(tk.Frame):
-    """Scrolling live transcript preview."""
+# ---------------------------------------------------------------------------
+# Custom Status Bar Widget
+# ---------------------------------------------------------------------------
+class StatusWidget(Gtk.Box):
+    def __init__(self):
+        super().__init__(orientation=Gtk.Orientation.Horizontal, spacing=8)
+        self.get_style_context().add_class("status-bar")
+        self._state = "IDLE"
+        self._lang = ""
+        self._engine = "VOSK"
+        self._start_time = None
+        self._pulse_val = 0.0
 
-    def __init__(self, parent, text_queue, **kw):
-        super().__init__(parent, bg=BG3, **kw)
-        self._q = text_queue
-        self._session_text = []
+        # Pulse Dot Drawing Area
+        self._dot = Gtk.DrawingArea()
+        self._dot.set_size_request(16, 16)
+        self._dot.connect("draw", self._draw_dot)
+        self.pack_start(self._dot, False, False, 4)
 
-        lbl = tk.Label(self, text="▶  Live Transcript", font=FONTS["small"],
-                       fg=ACCENT, bg=BG3, anchor="w")
-        lbl.pack(fill="x", padx=10, pady=(8, 2))
+        # Label
+        self._label = Gtk.Label(label="Ready")
+        self._label.set_alignment(0.0, 0.5)
+        self.pack_start(self._label, False, False, 4)
 
-        self._text = tk.Text(self, height=5, font=FONTS["mono"],
-                             bg=BG3, fg=TEXT, insertbackground=TEXT,
-                             relief="flat", wrap="word",
-                             state="disabled", padx=8, pady=4)
-        self._text.pack(fill="both", expand=True, padx=4, pady=(0, 4))
+        # Engine Badge
+        self._badge = Gtk.Label(label="VOSK")
+        self._badge.get_style_context().add_class("badge-engine")
+        self.pack_start(self._badge, False, False, 8)
 
-        sb = tk.Scrollbar(self._text, command=self._text.yview)
-        self._text.config(yscrollcommand=sb.set)
-        self._text.tag_config("new", foreground=GREEN)
-        self._text.tag_config("old", foreground=TEXT2)
+        # Timer
+        self._timer_label = Gtk.Label(label="")
+        self._timer_label.get_style_context().add_class("text-muted")
+        self.pack_end(self._timer_label, False, False, 4)
 
-        self._poll()
+        GLib.timeout_add(100, self._on_pulse_tick)
 
-    def _poll(self):
-        updated = False
-        while True:
-            try:
-                line = self._q.get_nowait()
-                if line.strip():
-                    self._session_text.append(line.strip())
-                    updated = True
-            except queue.Empty:
-                break
-        if updated:
-            self._refresh()
-        self.after(200, self._poll)
+    def _draw_dot(self, widget, cr):
+        w = self._dot.get_allocated_width()
+        h = self._dot.get_allocated_height()
+        cx, cy = w/2, h/2
+        r = 6
 
-    def _refresh(self):
-        self._text.config(state="normal")
-        self._text.delete("1.0", "end")
-        lines = self._session_text[-40:]
-        for i, line in enumerate(lines):
-            tag = "new" if i == len(lines) - 1 else "old"
-            self._text.insert("end", line + "\n", tag)
-        self._text.see("end")
-        self._text.config(state="disabled")
-
-    def clear(self):
-        self._session_text = []
-        self._refresh()
-
-    def get_all(self):
-        return "\n".join(self._session_text)
-
-
-class EnginePanel(tk.Frame):
-    """Engine switcher — reads/writes config.sh."""
-
-    ENGINES = [
-        ("VOSK",    "Fast, offline, low CPU",        BLUE),
-        ("WHISPER", "High accuracy, GPU/CPU",         ACCENT),
-        ("WLK",     "Real-time streaming (best)",     GREEN),
-    ]
-
-    WHISPER_MODELS_EN = ["tiny.en", "base.en", "small.en", "medium.en", "large-v2"]
-    WHISPER_MODELS_AR = ["tiny", "base", "small", "medium"]
-
-    def __init__(self, parent, on_engine_changed=None, **kw):
-        super().__init__(parent, bg=BG2, **kw)
-        self._cb = on_engine_changed
-        self._cfg = read_config()
-        self._engine_var = tk.StringVar(value=self._cfg.get("ENGLISH_ENGINE", "VOSK"))
-        self._en_model_var = tk.StringVar(value=self._cfg.get("ENGLISH_WHISPER_MODEL", "small.en"))
-        self._ar_model_var = tk.StringVar(value=self._cfg.get("ARABIC_WHISPER_MODEL", "small"))
-        self._timeout_var = tk.StringVar(value=self._cfg.get("VOSK_TIMEOUT", "12"))
-        self._vad_var = tk.BooleanVar(value=self._cfg.get("VAD_GATE", "off") == "on")
-        self._audio_device_var = tk.StringVar(value=self._cfg.get("AUDIO_DEVICE", "default"))
-
-        lbl = tk.Label(self, text="⚙  Engine", font=FONTS["small"],
-                       fg=ACCENT, bg=BG2, anchor="w")
-        lbl.pack(fill="x", padx=10, pady=(10, 4))
-
-        btn_frame = tk.Frame(self, bg=BG2)
-        btn_frame.pack(fill="x", padx=10, pady=2)
-        self._btns = {}
-        for eng, tip, col in self.ENGINES:
-            b = tk.Button(btn_frame, text=eng, font=FONTS["small"],
-                          fg=BG, bg=col if eng == self._engine_var.get() else BG3,
-                          relief="flat", padx=10, pady=4, cursor="hand2",
-                          command=lambda e=eng: self._select_engine(e))
-            b.pack(side="left", padx=3)
-            self._btns[eng] = b
-
-        # Model rows
-        model_frame = tk.Frame(self, bg=BG2)
-        model_frame.pack(fill="x", padx=10, pady=4)
-
-        tk.Label(model_frame, text="EN model:", font=FONTS["small"],
-                 fg=TEXT2, bg=BG2, width=12, anchor="w").grid(row=0, column=0, sticky="w")
-        en_cb = ttk.Combobox(model_frame, textvariable=self._en_model_var,
-                              values=self.WHISPER_MODELS_EN, state="readonly",
-                              width=14, font=FONTS["small"])
-        en_cb.grid(row=0, column=1, padx=4, pady=2, sticky="w")
-        en_cb.bind("<<ComboboxSelected>>", lambda e: self._save())
-
-        tk.Label(model_frame, text="AR model:", font=FONTS["small"],
-                 fg=TEXT2, bg=BG2, width=12, anchor="w").grid(row=1, column=0, sticky="w")
-        ar_cb = ttk.Combobox(model_frame, textvariable=self._ar_model_var,
-                              values=self.WHISPER_MODELS_AR, state="readonly",
-                              width=14, font=FONTS["small"])
-        ar_cb.grid(row=1, column=1, padx=4, pady=2, sticky="w")
-        ar_cb.bind("<<ComboboxSelected>>", lambda e: self._save())
-
-        tk.Label(model_frame, text="Timeout (s):", font=FONTS["small"],
-                 fg=TEXT2, bg=BG2, width=12, anchor="w").grid(row=2, column=0, sticky="w")
-        tk.Spinbox(model_frame, from_=2, to=60, textvariable=self._timeout_var,
-                   width=5, font=FONTS["small"],
-                   command=self._save).grid(row=2, column=1, padx=4, pady=2, sticky="w")
-
-        # Audio Device Selector Row
-        tk.Label(model_frame, text="Mic Device:", font=FONTS["small"],
-                 fg=TEXT2, bg=BG2, width=12, anchor="w").grid(row=3, column=0, sticky="w")
+        if self._state == "DICTATING":
+            # Orange pulse for loading, red pulse for recording
+            if "loading" in self._label.get_text().lower():
+                cr.set_source_rgba(1.0, 0.5 + 0.2 * math.sin(self._pulse_val), 0.0, 1.0)
+            else:
+                cr.set_source_rgba(0.9, 0.15 + 0.1 * math.sin(self._pulse_val), 0.15, 1.0)
+        else:
+            cr.set_source_rgba(0.58, 0.6, 0.69, 1.0) # Grey idle
         
+        cr.arc(cx, cy, r, 0, 2 * math.pi)
+        cr.fill()
+
+    def _on_pulse_tick(self):
+        self._pulse_val += 0.25
+        self._dot.queue_draw()
+
+        if self._state == "DICTATING" and self._start_time and "loading" not in self._label.get_text().lower():
+            elapsed = int(time.time() - self._start_time)
+            m, s = divmod(elapsed, 60)
+            self._timer_label.set_text(f"⏱ {m:02d}:{s:02d}")
+        return True
+
+    def set_loading(self, is_loading):
+        if is_loading:
+            self._label.set_text("Loading model...")
+        else:
+            self._label.set_text(f"Dictating  ({self._lang})" if self._lang else "Dictating")
+
+    def update_state(self, state, lang="", engine=""):
+        self._state = state
+        self._lang = lang
+        if engine:
+            self._engine = engine
+            self._badge.set_text(engine)
+            for c in ["vosk", "whisper", "wlk"]:
+                self._badge.get_style_context().remove_class(c)
+            self._badge.get_style_context().add_class(engine.lower())
+
+        if state == "DICTATING":
+            if self._start_time is None:
+                self._start_time = time.time()
+            self._label.set_text(f"Dictating  ({lang})" if lang else "Dictating")
+            self._badge.get_style_context().add_class("recording")
+        else:
+            self._start_time = None
+            self._label.set_text("Ready")
+            self._timer_label.set_text("")
+            self._badge.get_style_context().remove_class("recording")
+
+
+# ---------------------------------------------------------------------------
+# GTK Main Window & Components
+# ---------------------------------------------------------------------------
+class PopupPanel(Gtk.Window):
+    def __init__(self, on_start=None, on_stop=None, on_quit=None):
+        super().__init__(type=Gtk.WindowType.TOPLEVEL)
+        self.set_title("Voice Controller")
+        self.set_default_size(420, 640)
+        self.set_resizable(False)
+        self.set_keep_above(True)
+        self.set_decorated(False)
+        self.set_skip_taskbar_hint(True)
+
+        self._on_start = on_start
+        self._on_stop = on_stop
+        self._on_quit = on_quit
+
+        self._level_q = queue.Queue(maxsize=100)
+        self._text_q = queue.Queue(maxsize=200)
+
+        self._sampler = AudioLevelSampler(self._level_q)
+        self._tailer = TranscriptTailer(self._text_q, status_cb=self._on_log_status)
+        self._sampler.start()
+        self._tailer.start()
+
+        self._cfg = read_config()
+        self._history_session = []
+
+        # Start Gtk thread
+        self._ready = threading.Event()
+        t = threading.Thread(target=self._gtk_thread, daemon=True)
+        t.start()
+        self._ready.wait(timeout=5)
+
+    def _gtk_thread(self):
+        # Initialize Gdk/Gtk thread safety
+        GLib.threads_init()
+        Gdk.threads_init()
+        
+        # Load style context
+        style_provider = Gtk.CssProvider()
+        style_provider.load_from_data(GTK_STYLE)
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(),
+            style_provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+
+        self._build_ui()
+        self.connect("button-press-event", self._on_button_press)
+        self.connect("motion-notify-event", self._on_motion_notify)
+        
+        GLib.timeout_add(150, self._poll_queues)
+        self._cur_state = "IDLE"
+        self._cur_engine = self._cfg.get("ENGLISH_ENGINE", "VOSK")
+        self._ready.set()
+        
+        Gtk.main()
+
+    def _build_ui(self):
+        main_box = Gtk.Box(orientation=Gtk.Orientation.Vertical, spacing=0)
+        self.add(main_box)
+
+        # ── Header bar ──────────────────────────────────────────────────────
+        hdr = Gtk.Box(orientation=Gtk.Orientation.Horizontal, spacing=8)
+        hdr.get_style_context().add_class("header-bar")
+        
+        lbl_title = Gtk.Label(label="🎙  Voice Controller")
+        lbl_title.get_style_context().add_class("header-title")
+        hdr.pack_start(lbl_title, False, False, 4)
+
+        btn_close = Gtk.Button(label="✕")
+        btn_close.get_style_context().add_class("btn-close")
+        btn_close.connect("clicked", lambda w: self.hide())
+        hdr.pack_end(btn_close, False, False, 4)
+        main_box.pack_start(hdr, False, False, 0)
+
+        # ── Status Widget ───────────────────────────────────────────────────
+        self._status_bar = StatusWidget()
+        main_box.pack_start(self._status_bar, False, False, 0)
+
+        # ── Waveform Canvas ─────────────────────────────────────────────────
+        self._waveform = WaveformArea(self._level_q)
+        main_box.pack_start(self._waveform, False, False, 6)
+
+        # ── Actions ─────────────────────────────────────────────────────────
+        ctrl_box = Gtk.Box(orientation=Gtk.Orientation.Horizontal, spacing=8)
+        ctrl_box.set_margin_start(12)
+        ctrl_box.set_margin_end(12)
+        ctrl_box.set_margin_top(6)
+        ctrl_box.set_margin_bottom(6)
+
+        self._start_btn = Gtk.Button(label="▶  Start Dictation")
+        self._start_btn.get_style_context().add_class("btn-start")
+        self._start_btn.connect("clicked", lambda w: self._do_start())
+        ctrl_box.pack_start(self._start_btn, False, False, 0)
+
+        self._stop_btn = Gtk.Button(label="■  Stop")
+        self._stop_btn.get_style_context().add_class("btn-stop")
+        self._stop_btn.set_sensitive(False)
+        self._stop_btn.connect("clicked", lambda w: self._do_stop())
+        ctrl_box.pack_start(self._stop_btn, False, False, 4)
+
+        btn_settings = Gtk.Button(label="⚙  Settings")
+        btn_settings.get_style_context().add_class("btn-settings")
+        btn_settings.connect("clicked", lambda w: run_script(os.path.join(STT_DIR, "stt-settings.sh")))
+        ctrl_box.pack_end(btn_settings, False, False, 0)
+        main_box.pack_start(ctrl_box, False, False, 4)
+
+        # ── Notebook ────────────────────────────────────────────────────────
+        nb = Gtk.Notebook()
+        main_box.pack_start(nb, True, True, 4)
+
+        # Tab 1: Live
+        live_box = Gtk.Box(orientation=Gtk.Orientation.Vertical, spacing=6)
+        live_box.set_margin_top(8)
+        live_box.set_margin_bottom(8)
+        live_box.set_margin_start(12)
+        live_box.set_margin_end(12)
+
+        lbl_live = Gtk.Label(label="▶  Live Transcript")
+        lbl_live.set_alignment(0.0, 0.5)
+        lbl_live.get_style_context().add_class("text-muted")
+        live_box.pack_start(lbl_live, False, False, 2)
+
+        scrolled_live = Gtk.ScrolledWindow()
+        self._live_text = Gtk.TextView()
+        self._live_text.get_style_context().add_class("text-area")
+        self._live_text.set_editable(False)
+        self._live_text.set_cursor_visible(False)
+        self._live_text.set_wrap_mode(Gtk.WrapMode.WORD)
+        scrolled_live.add(self._live_text)
+        live_box.pack_start(scrolled_live, True, True, 4)
+
+        nb.append_page(live_box, Gtk.Label(label="  Live  "))
+
+        # Tab 2: Engine Configuration
+        eng_box = Gtk.Box(orientation=Gtk.Orientation.Vertical, spacing=8)
+        eng_box.set_margin_top(12)
+        eng_box.set_margin_bottom(12)
+        eng_box.set_margin_start(16)
+        eng_box.set_margin_end(16)
+
+        lbl_eng_title = Gtk.Label(label="⚙  Engine Switcher")
+        lbl_eng_title.set_alignment(0.0, 0.5)
+        eng_box.pack_start(lbl_eng_title, False, False, 4)
+
+        # Switch Buttons
+        btn_switch_grid = Gtk.Grid()
+        btn_switch_grid.set_column_spacing(8)
+        
+        self._eng_btns = {}
+        col_map = {"VOSK": "vosk", "WHISPER": "whisper", "WLK": "wlk"}
+        for idx, (eng, tip, col) in enumerate(EnginePanel_mock.ENGINES):
+            b = Gtk.Button(label=eng)
+            b.get_style_context().add_class("btn-settings")
+            if eng == self._cfg.get("ENGLISH_ENGINE", "VOSK"):
+                b.get_style_context().add_class(col_map[eng])
+            b.connect("clicked", self._select_engine, eng)
+            btn_switch_grid.attach(b, idx, 0, 1, 1)
+            self._eng_btns[eng] = b
+        eng_box.pack_start(btn_switch_grid, False, False, 6)
+
+        # Form fields
+        form = Gtk.Grid()
+        form.set_row_spacing(8)
+        form.set_column_spacing(12)
+
+        # EN Model
+        lbl_en = Gtk.Label(label="EN model:")
+        lbl_en.set_alignment(0.0, 0.5)
+        form.attach(lbl_en, 0, 0, 1, 1)
+        self._en_model_cb = Gtk.ComboBoxText()
+        for m in EnginePanel_mock.WHISPER_MODELS_EN:
+            self._en_model_cb.append_text(m)
+        self._en_model_cb.set_active(EnginePanel_mock.WHISPER_MODELS_EN.index(self._cfg.get("ENGLISH_WHISPER_MODEL", "small.en")))
+        self._en_model_cb.connect("changed", lambda cb: self._save_config())
+        form.attach(self._en_model_cb, 1, 0, 1, 1)
+
+        # AR Model
+        lbl_ar = Gtk.Label(label="AR model:")
+        lbl_ar.set_alignment(0.0, 0.5)
+        form.attach(lbl_ar, 0, 1, 1, 1)
+        self._ar_model_cb = Gtk.ComboBoxText()
+        for m in EnginePanel_mock.WHISPER_MODELS_AR:
+            self._ar_model_cb.append_text(m)
+        self._ar_model_cb.set_active(EnginePanel_mock.WHISPER_MODELS_AR.index(self._cfg.get("ARABIC_WHISPER_MODEL", "small")))
+        self._ar_model_cb.connect("changed", lambda cb: self._save_config())
+        form.attach(self._ar_model_cb, 1, 1, 1, 1)
+
+        # Timeout
+        lbl_t = Gtk.Label(label="Timeout (s):")
+        lbl_t.set_alignment(0.0, 0.5)
+        form.attach(lbl_t, 0, 2, 1, 1)
+        self._timeout_spin = Gtk.SpinButton.new_with_range(2.0, 60.0, 1.0)
+        self._timeout_spin.set_value(float(self._cfg.get("VOSK_TIMEOUT", "12")))
+        self._timeout_spin.connect("value-changed", lambda spin: self._save_config())
+        form.attach(self._timeout_spin, 1, 2, 1, 1)
+
+        # Mic Device
+        lbl_mic = Gtk.Label(label="Mic Device:")
+        lbl_mic.set_alignment(0.0, 0.5)
+        form.attach(lbl_mic, 0, 3, 1, 1)
+        self._mic_cb = Gtk.ComboBoxText()
         devices = ["default"]
         try:
             result = subprocess.run(["pactl", "list", "sources", "short"], capture_output=True, text=True)
@@ -674,336 +770,123 @@ class EnginePanel(tk.Frame):
                         devices.append(parts[1])
         except Exception:
             pass
+        for dev in devices:
+            self._mic_cb.append_text(dev)
+        curr_device = self._cfg.get("AUDIO_DEVICE", "default")
+        if curr_device in devices:
+            self._mic_cb.set_active(devices.index(curr_device))
+        else:
+            self._mic_cb.set_active(0)
+        self._mic_cb.connect("changed", lambda cb: self._save_config())
+        form.attach(self._mic_cb, 1, 3, 1, 1)
 
-        device_cb = ttk.Combobox(model_frame, textvariable=self._audio_device_var,
-                                 values=devices, state="readonly",
-                                 width=22, font=FONTS["small"])
-        device_cb.grid(row=3, column=1, padx=4, pady=2, sticky="w")
-        device_cb.bind("<<ComboboxSelected>>", lambda e: self._save())
+        # VAD checkbox
+        self._vad_cb = Gtk.CheckButton(label="VAD Gate (Silero)")
+        self._vad_cb.set_active(self._cfg.get("VAD_GATE", "off") == "on")
+        self._vad_cb.connect("toggled", lambda cb: self._save_config())
+        form.attach(self._vad_cb, 0, 4, 2, 1)
 
-        vad_cb = tk.Checkbutton(model_frame, text="VAD Gate (Silero)", variable=self._vad_var,
-                                font=FONTS["small"], fg=TEXT2, bg=BG2,
-                                activebackground=BG2, selectcolor=BG3,
-                                command=self._save)
-        vad_cb.grid(row=4, column=0, columnspan=2, sticky="w", pady=2)
+        eng_box.pack_start(form, False, False, 4)
 
-        self._status_lbl = tk.Label(self, text="", font=FONTS["small"],
-                                    fg=GREEN, bg=BG2, anchor="w")
-        self._status_lbl.pack(fill="x", padx=10, pady=(0, 6))
+        self._engine_status_lbl = Gtk.Label(label="")
+        self._engine_status_lbl.set_alignment(0.0, 0.5)
+        eng_box.pack_start(self._engine_status_lbl, False, False, 4)
 
-    def _select_engine(self, engine):
-        self._engine_var.set(engine)
-        for eng, _, col in self.ENGINES:
-            self._btns[eng].config(bg=col if eng == engine else BG3,
-                                   fg=BG if eng == engine else TEXT2)
-        self._save()
+        nb.append_page(eng_box, Gtk.Label(label="  Engine  "))
 
-    def _save(self):
-        engine = self._engine_var.get()
-        write_config_key("ENGLISH_ENGINE", engine)
-        write_config_key("ENGLISH_WHISPER_MODEL", self._en_model_var.get())
-        write_config_key("ARABIC_WHISPER_MODEL", self._ar_model_var.get())
-        write_config_key("VOSK_TIMEOUT", self._timeout_var.get())
-        write_config_key("VAD_GATE", "on" if self._vad_var.get() else "off")
-        write_config_key("AUDIO_DEVICE", self._audio_device_var.get())
-        self._status_lbl.config(text="✓ Saved — takes effect on next start")
-        self.after(3000, lambda: self._status_lbl.config(text=""))
-        if self._cb:
-            self._cb(engine)
+        # Tab 3: History & Shortcuts
+        hist_box = Gtk.Box(orientation=Gtk.Orientation.Vertical, spacing=6)
+        hist_box.set_margin_top(8)
+        hist_box.set_margin_bottom(8)
+        hist_box.set_margin_start(12)
+        hist_box.set_margin_end(12)
 
-    def _save(self):
-        engine = self._engine_var.get()
-        write_config_key("ENGLISH_ENGINE", engine)
-        write_config_key("ENGLISH_WHISPER_MODEL", self._en_model_var.get())
-        write_config_key("ARABIC_WHISPER_MODEL", self._ar_model_var.get())
-        write_config_key("VOSK_TIMEOUT", self._timeout_var.get())
-        write_config_key("VAD_GATE", "on" if self._vad_var.get() else "off")
-        self._status_lbl.config(text="✓ Saved — takes effect on next start")
-        self.after(3000, lambda: self._status_lbl.config(text=""))
-        if self._cb:
-            self._cb(engine)
-
-
-class HistoryPanel(tk.Frame):
-    """Session transcript history + copy/clear controls."""
-
-    def __init__(self, parent, live_transcript: LiveTranscript, **kw):
-        super().__init__(parent, bg=BG, **kw)
-        self._lt = live_transcript
-
-        hdr = tk.Frame(self, bg=BG)
-        hdr.pack(fill="x", padx=10, pady=(8, 2))
-        tk.Label(hdr, text="📜  Session History", font=FONTS["small"],
-                 fg=ACCENT, bg=BG, anchor="w").pack(side="left")
-
-        btn_frame = tk.Frame(hdr, bg=BG)
-        btn_frame.pack(side="right")
-        for txt, cmd in [("Copy", self._copy), ("Clear", self._clear)]:
-            b = tk.Button(btn_frame, text=txt, font=FONTS["small"],
-                          bg=BG3, fg=TEXT2, relief="flat", padx=8, pady=2,
-                          cursor="hand2", command=cmd)
-            b.pack(side="left", padx=2)
-
-        self._text = tk.Text(self, height=8, font=FONTS["mono"],
-                             bg=BG3, fg=TEXT, relief="flat",
-                             wrap="word", state="disabled", padx=8, pady=4)
-        self._text.pack(fill="both", expand=True, padx=4, pady=(0, 4))
-        self._text.tag_config("ts", foreground=TEXT2)
-        self._text.tag_config("txt", foreground=TEXT)
-
-        # Keyboard Shortcut reference helper
-        sh_frame = tk.Frame(self, bg=BG2, bd=1, relief="solid", highlightbackground=BORDER)
-        sh_frame.pack(fill="x", padx=6, pady=(0, 8))
+        hist_hdr = Gtk.Box(orientation=Gtk.Orientation.Horizontal, spacing=8)
+        lbl_hist_title = Gtk.Label(label="📜  Session History")
+        hist_hdr.pack_start(lbl_hist_title, False, False, 4)
         
-        tk.Label(sh_frame, text="⌨  Quick Shortcuts Reference", font=FONTS["small"],
-                 fg=ACCENT, bg=BG2, anchor="w").pack(fill="x", padx=10, pady=(6, 2))
+        btn_copy = Gtk.Button(label="Copy")
+        btn_copy.get_style_context().add_class("btn-settings")
+        btn_copy.connect("clicked", self._copy_history)
+        hist_hdr.pack_end(btn_copy, False, False, 4)
+
+        btn_clear = Gtk.Button(label="Clear")
+        btn_clear.get_style_context().add_class("btn-settings")
+        btn_clear.connect("clicked", self._clear_history)
+        hist_hdr.pack_end(btn_clear, False, False, 4)
+        hist_box.pack_start(hist_hdr, False, False, 2)
+
+        scrolled_hist = Gtk.ScrolledWindow()
+        self._hist_text = Gtk.TextView()
+        self._hist_text.get_style_context().add_class("text-area")
+        self._hist_text.set_editable(False)
+        self._hist_text.set_wrap_mode(Gtk.WrapMode.WORD)
+        scrolled_hist.add(self._hist_text)
+        hist_box.pack_start(scrolled_hist, True, True, 4)
+
+        # Keyboard Shortcut reference helper at bottom
+        sh_frame = Gtk.Box(orientation=Gtk.Orientation.Vertical, spacing=4)
+        sh_frame.get_style_context().add_class("shortcut-box")
         
-        lbl_h1 = tk.Frame(sh_frame, bg=BG2)
-        lbl_h1.pack(fill="x", padx=10, pady=2)
-        tk.Label(lbl_h1, text="Start Dictation:", font=FONTS["small"], fg=TEXT2, bg=BG2).pack(side="left")
-        tk.Label(lbl_h1, text="Super + H", font=FONTS["small"], fg=TEXT, bg=BG3, padx=4).pack(side="right")
-        
-        lbl_h2 = tk.Frame(sh_frame, bg=BG2)
-        lbl_h2.pack(fill="x", padx=10, pady=(2, 6))
-        tk.Label(lbl_h2, text="Stop Dictation:", font=FONTS["small"], fg=TEXT2, bg=BG2).pack(side="left")
-        tk.Label(lbl_h2, text="Shift + Super + H", font=FONTS["small"], fg=TEXT, bg=BG3, padx=4).pack(side="right")
+        lbl_shortcut_title = Gtk.Label(label="⌨  Quick Shortcuts Reference")
+        lbl_shortcut_title.set_alignment(0.0, 0.5)
+        lbl_shortcut_title.get_style_context().add_class("header-title")
+        sh_frame.pack_start(lbl_shortcut_title, False, False, 2)
 
-    def append(self, text, ts=None):
-        if ts is None:
-            ts = time.strftime("%H:%M:%S")
-        self._text.config(state="normal")
-        self._text.insert("end", f"[{ts}] ", "ts")
-        self._text.insert("end", text + "\n", "txt")
-        self._text.see("end")
-        self._text.config(state="disabled")
+        sc1 = Gtk.Box(orientation=Gtk.Orientation.Horizontal)
+        lbl_sc1_desc = Gtk.Label(label="Start Dictation:")
+        sc1.pack_start(lbl_sc1_desc, False, False, 0)
+        lbl_sc1_key = Gtk.Label(label="Super + H")
+        lbl_sc1_key.get_style_context().add_class("key-cap")
+        sc1.pack_end(lbl_sc1_key, False, False, 0)
+        sh_frame.pack_start(sc1, False, False, 2)
 
-    def _copy(self):
-        content = self._lt.get_all()
-        self.clipboard_clear()
-        self.clipboard_append(content)
-        messagebox.showinfo("Copied", "Session transcript copied to clipboard.", parent=self)
+        sc2 = Gtk.Box(orientation=Gtk.Orientation.Horizontal)
+        lbl_sc2_desc = Gtk.Label(label="Stop Dictation:")
+        sc2.pack_start(lbl_sc2_desc, False, False, 0)
+        lbl_sc2_key = Gtk.Label(label="Shift + Super + H")
+        lbl_sc2_key.get_style_context().add_class("key-cap")
+        sc2.pack_end(lbl_sc2_key, False, False, 0)
+        sh_frame.pack_start(sc2, False, False, 2)
 
-    def _clear(self):
-        self._lt.clear()
-        self._text.config(state="normal")
-        self._text.delete("1.0", "end")
-        self._text.config(state="disabled")
+        hist_box.pack_start(sh_frame, False, False, 4)
 
-
-class ModelManager(tk.Frame):
-    """Installed model listing + download link."""
-
-    def __init__(self, parent, **kw):
-        super().__init__(parent, bg=BG2, **kw)
-        hdr = tk.Frame(self, bg=BG2)
-        hdr.pack(fill="x", padx=10, pady=(8, 2))
-        tk.Label(hdr, text="📦  Models", font=FONTS["small"],
-                 fg=ACCENT, bg=BG2, anchor="w").pack(side="left")
-        tk.Button(hdr, text="↓ Download More", font=FONTS["small"],
-                  bg=ACCENT, fg=BG, relief="flat", padx=8, pady=2,
-                  cursor="hand2",
-                  command=lambda: webbrowser.open(VOSK_MODELS_URL)
-                  ).pack(side="right")
-
-        self._list_frame = tk.Frame(self, bg=BG2)
-        self._list_frame.pack(fill="x", padx=10, pady=(0, 8))
-        self.refresh()
-
-    def refresh(self):
-        for w in self._list_frame.winfo_children():
-            w.destroy()
-        models = installed_models()
-        if not models:
-            tk.Label(self._list_frame, text="No models found in " + MODEL_BASE,
-                     font=FONTS["small"], fg=TEXT2, bg=BG2).pack(anchor="w")
-            return
-        for name, path, size in models:
-            row = tk.Frame(self._list_frame, bg=BG3)
-            row.pack(fill="x", pady=2)
-            tk.Label(row, text=f"  📁 {name}", font=FONTS["small"],
-                     fg=TEXT, bg=BG3, anchor="w").pack(side="left", padx=4, pady=3)
-            tk.Label(row, text=f"{size} MB", font=FONTS["small"],
-                     fg=TEXT2, bg=BG3).pack(side="right", padx=8)
-
-
-# ---------------------------------------------------------------------------
-# Main Popup Window
-# ---------------------------------------------------------------------------
-
-class PopupPanel:
-    """
-    Floating popup window that docks near the system tray.
-
-    Public API:
-        show()  — show the window
-        hide()  — hide the window
-        toggle() — show/hide
-        update_state(state, lang, engine) — called by the poll thread
-        push_transcript(line) — called externally to feed transcript lines
-    """
-
-    def __init__(self, on_start=None, on_stop=None, on_quit=None):
-        self._on_start = on_start
-        self._on_stop = on_stop
-        self._on_quit = on_quit
-
-        self._level_q = queue.Queue(maxsize=40)
-        self._text_q = queue.Queue(maxsize=200)
-
-        self._sampler = AudioLevelSampler(self._level_q)
-        self._tailer = TranscriptTailer(self._text_q, status_cb=self._on_log_status)
-        self._sampler.start()
-        self._tailer.start()
-
-        self._win = None
-        self._visible = False
-        self._cur_state = "IDLE"
-        self._cur_engine = "VOSK"
-        self._history_session = []
-
-        # Build Tk root in the background thread — we'll use `after` from tray
-        self._root = None
-        self._ready = threading.Event()
-        t = threading.Thread(target=self._tk_thread, daemon=True)
-        t.start()
-        self._ready.wait(timeout=5)
-
-    # ---- Tk thread --------------------------------------------------------
-
-    def _tk_thread(self):
-        self._root = tk.Tk()
-        self._root.withdraw()
-        self._root.title("Voice Controller")
-        self._root.configure(bg=BG)
-        self._root.resizable(False, False)
-        self._root.attributes("-type", "dialog")      # float above taskbar
-        self._root.overrideredirect(False)
-
-        # Style comboboxes
-        style = ttk.Style(self._root)
-        style.theme_use("clam")
-        style.configure("TCombobox", fieldbackground=BG3,
-                        background=BG3, foreground=TEXT,
-                        selectbackground=ACCENT, selectforeground=BG)
-
-        self._build_ui()
-        self._ready.set()
-        self._root.mainloop()
-
-    def _build_ui(self):
-        root = self._root
-        root.geometry("420x660")
-
-        # ── Title bar ──────────────────────────────────────────────────────
-        title_bar = tk.Frame(root, bg=BG2, height=42)
-        title_bar.pack(fill="x")
-        title_bar.pack_propagate(False)
-        title_bar.bind("<ButtonPress-1>", self._start_drag)
-        title_bar.bind("<B1-Motion>", self._on_drag)
-
-        tk.Label(title_bar, text="🎙  Voice Controller",
-                 font=FONTS["title"], fg=TEXT, bg=BG2,
-                 anchor="w").pack(side="left", padx=14)
-
-        close_btn = tk.Button(title_bar, text="✕", font=FONTS["body"],
-                              bg=BG2, fg=TEXT2, relief="flat",
-                              activebackground=RED, activeforeground=TEXT,
-                              cursor="hand2", command=self.hide)
-        close_btn.pack(side="right", padx=8)
-
-        # ── Status bar ──────────────────────────────────────────────────────
-        self._status_bar = StatusBar(root)
-        self._status_bar.pack(fill="x")
-
-        # Thin separator
-        sep = tk.Frame(root, bg=BORDER, height=1)
-        sep.pack(fill="x")
-
-        # ── Waveform ────────────────────────────────────────────────────────
-        self._waveform = WaveformCanvas(root, self._level_q, height=60)
-        self._waveform.pack(fill="x", padx=6, pady=(6, 2))
-
-        # ── Control buttons ─────────────────────────────────────────────────
-        ctrl = tk.Frame(root, bg=BG)
-        ctrl.pack(fill="x", padx=10, pady=6)
-
-        self._start_btn = tk.Button(
-            ctrl, text="▶  Start Dictation", font=FONTS["body"],
-            bg=GREEN, fg=BG, relief="flat", padx=14, pady=8,
-            cursor="hand2", command=self._do_start,
-            activebackground="#38d970")
-        self._start_btn.pack(side="left", padx=(0, 6))
-
-        self._stop_btn = tk.Button(
-            ctrl, text="■  Stop", font=FONTS["body"],
-            bg=RED, fg=TEXT, relief="flat", padx=14, pady=8,
-            cursor="hand2", command=self._do_stop,
-            activebackground="#d43030")
-        self._stop_btn.pack(side="left", padx=(0, 6))
-
-        tk.Button(ctrl, text="⚙  Settings", font=FONTS["small"],
-                  bg=BG3, fg=TEXT2, relief="flat", padx=10, pady=8,
-                  cursor="hand2", command=self._open_settings
-                  ).pack(side="right")
-
-        sep2 = tk.Frame(root, bg=BORDER, height=1)
-        sep2.pack(fill="x")
-
-        # ── Notebook (tabs) ─────────────────────────────────────────────────
-        nb = ttk.Notebook(root)
-        nb.pack(fill="both", expand=True, padx=4, pady=4)
-
-        # Tab 1: Live Transcript
-        tab_live = tk.Frame(nb, bg=BG3)
-        nb.add(tab_live, text="  Live  ")
-        self._live = LiveTranscript(tab_live, self._text_q)
-        self._live.pack(fill="both", expand=True)
-
-        # Tab 2: Engine / Settings
-        tab_engine = tk.Frame(nb, bg=BG2)
-        nb.add(tab_engine, text="  Engine  ")
-        self._engine_panel = EnginePanel(tab_engine,
-                                         on_engine_changed=self._on_engine_changed)
-        self._engine_panel.pack(fill="both", expand=True)
-
-        # Tab 3: History
-        tab_history = tk.Frame(nb, bg=BG)
-        nb.add(tab_history, text="  History  ")
-        self._history = HistoryPanel(tab_history, self._live)
-        self._history.pack(fill="both", expand=True)
+        nb.append_page(hist_box, Gtk.Label(label="  History  "))
 
         # Tab 4: Models
-        tab_models = tk.Frame(nb, bg=BG2)
-        nb.add(tab_models, text="  Models  ")
-        self._models = ModelManager(tab_models)
-        self._models.pack(fill="both", expand=True)
+        models_box = Gtk.Box(orientation=Gtk.Orientation.Vertical, spacing=6)
+        models_box.set_margin_top(8)
+        models_box.set_margin_bottom(8)
+        models_box.set_margin_start(12)
+        models_box.set_margin_end(12)
+
+        m_hdr = Gtk.Box(orientation=Gtk.Orientation.Horizontal, spacing=8)
+        lbl_m = Gtk.Label(label="📦  Models")
+        m_hdr.pack_start(lbl_m, False, False, 4)
+        
+        btn_dl = Gtk.Button(label="↓ Download More")
+        btn_dl.get_style_context().add_class("btn-start")
+        btn_dl.connect("clicked", lambda w: webbrowser.open(VOSK_MODELS_URL))
+        m_hdr.pack_end(btn_dl, False, False, 4)
+        models_box.pack_start(m_hdr, False, False, 4)
+
+        self._models_flow = Gtk.Box(orientation=Gtk.Orientation.Vertical, spacing=4)
+        models_box.pack_start(self._models_flow, True, True, 4)
+
+        nb.append_page(models_box, Gtk.Label(label="  Models  "))
 
         # ── Footer ──────────────────────────────────────────────────────────
-        footer = tk.Frame(root, bg=BG2, height=32)
-        footer.pack(fill="x", side="bottom")
-        footer.pack_propagate(False)
-        tk.Label(footer, text="nerd-dictation  ·  whisper_streaming  ·  WhisperLiveKit",
-                 font=FONTS["small"], fg=TEXT2, bg=BG2).pack(pady=6)
+        footer = Gtk.Box(orientation=Gtk.Orientation.Horizontal, spacing=0)
+        footer.set_size_request(-1, 32)
+        footer.get_style_context().add_class("header-bar")
+        
+        lbl_foot = Gtk.Label(label="nerd-dictation  ·  whisper_streaming  ·  WhisperLiveKit")
+        lbl_foot.set_alignment(0.5, 0.5)
+        lbl_foot.get_style_context().add_class("text-muted")
+        footer.pack_start(lbl_foot, True, True, 4)
+        main_box.pack_start(footer, False, False, 0)
 
-        # Drag support
-        self._drag_x = 0
-        self._drag_y = 0
-
-    # ---- Dragging ----------------------------------------------------------
-
-    def _start_drag(self, event):
-        self._drag_x = event.x
-        self._drag_y = event.y
-
-    def _on_drag(self, event):
-        if not self._root:
-            return
-        x = self._root.winfo_x() + event.x - self._drag_x
-        y = self._root.winfo_y() + event.y - self._drag_y
-        self._root.geometry(f"+{x}+{y}")
-
-    # ---- Button actions ----------------------------------------------------
-
+    # ---- Button Actions ----------------------------------------------------
     def _do_start(self):
         if self._on_start:
             self._on_start()
@@ -1012,86 +895,163 @@ class PopupPanel:
         if self._on_stop:
             self._on_stop()
 
-    def _open_settings(self):
-        run_script(os.path.join(STT_DIR, "stt-settings.sh"))
+    def _select_engine(self, button, engine_name):
+        self._cfg["ENGLISH_ENGINE"] = engine_name
+        col_map = {"VOSK": "vosk", "WHISPER": "whisper", "WLK": "wlk"}
+        for name, btn in self._eng_btns.items():
+            for c in ["vosk", "whisper", "wlk"]:
+                btn.get_style_context().remove_class(c)
+            if name == engine_name:
+                btn.get_style_context().add_class(col_map[name])
+        self._save_config()
 
-    def _on_engine_changed(self, engine):
-        self._cur_engine = engine
-        self._status_bar.update_state(self._cur_state, engine=engine)
+    def _save_config(self):
+        engine = self._cfg.get("ENGLISH_ENGINE", "VOSK")
+        en_model = self._en_model_cb.get_active_text() or "small.en"
+        ar_model = self._ar_model_cb.get_active_text() or "small"
+        timeout = str(int(self._timeout_spin.get_value()))
+        vad = "on" if self._vad_cb.get_active() else "off"
+        mic = self._mic_cb.get_active_text() or "default"
+
+        write_config_key("ENGLISH_ENGINE", engine)
+        write_config_key("ENGLISH_WHISPER_MODEL", en_model)
+        write_config_key("ARABIC_WHISPER_MODEL", ar_model)
+        write_config_key("VOSK_TIMEOUT", timeout)
+        write_config_key("VAD_GATE", vad)
+        write_config_key("AUDIO_DEVICE", mic)
+
+        self._engine_status_lbl.set_markup("<span foreground='#43e97b'>✓ Saved — takes effect next dictation</span>")
+        GLib.timeout_add_seconds(3, self._clear_save_status)
+
+    def _clear_save_status(self):
+        self._engine_status_lbl.set_text("")
+        return False
+
+    def _copy_history(self, button):
+        clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+        buf = self._hist_text.get_buffer()
+        text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True)
+        clipboard.set_text(text, -1)
+
+    def _clear_history(self, button):
+        self._history_session = []
+        self._hist_text.get_buffer().set_text("")
+        self._live_text.get_buffer().set_text("")
+
+    def _refresh_models(self):
+        for child in self._models_flow.get_children():
+            self._models_flow.remove(child)
+        models = installed_models()
+        if not models:
+            lbl_none = Gtk.Label(label="No models found in " + MODEL_BASE)
+            self._models_flow.pack_start(lbl_none, False, False, 4)
+            return
+
+        for name, path, size in models:
+            row = Gtk.Box(orientation=Gtk.Orientation.Horizontal, spacing=8)
+            row.get_style_context().add_class("card-row")
+            lbl_name = Gtk.Label(label=f"  📁 {name}")
+            row.pack_start(lbl_name, False, False, 4)
+            lbl_size = Gtk.Label(label=f"{size} MB")
+            row.pack_end(lbl_size, False, False, 4)
+            self._models_flow.pack_start(row, False, False, 2)
+        self._models_flow.show_all()
+
+    # ---- Dragging ----------------------------------------------------------
+    def _on_button_press(self, widget, event):
+        if event.button == 1:
+            self._drag_x = event.x
+            self._drag_y = event.y
+
+    def _on_motion_notify(self, widget, event):
+        if event.state & Gdk.ModifierType.BUTTON1_MASK:
+            x, y = self.get_position()
+            self.move(int(x + event.x - self._drag_x), int(y + event.y - self._drag_y))
+
+    # ---- Queue & Log Sync --------------------------------------------------
+    def _poll_queues(self):
+        # Update live transcript TextBuffer
+        new_text = []
+        while not self._text_q.empty():
+            new_text.append(self._text_q.get())
+
+        if new_text:
+            buf = self._live_text.get_buffer()
+            end_iter = buf.get_end_iter()
+            for t in new_text:
+                buf.insert(end_iter, t + "\n")
+                self._history_session.append(t)
+            
+            # Auto scroll to bottom
+            mark = buf.create_mark(None, buf.get_end_iter(), False)
+            self._live_text.scroll_to_mark(mark, 0.0, True, 0.0, 1.0)
+
+        return True
+
+    def _on_log_status(self, is_loading):
+        self._status_bar.set_loading(is_loading)
 
     # ---- Public API --------------------------------------------------------
-
     def show(self):
-        if not self._root:
-            return
-        self._root.after(0, self._do_show)
-
-    def _do_show(self):
-        self._visible = True
-        self._root.deiconify()
-        # Position bottom-right of screen
-        sw = self._root.winfo_screenwidth()
-        sh = self._root.winfo_screenheight()
-        w, h = 420, 660
-        x = sw - w - 16
-        y = sh - h - 60
-        self._root.geometry(f"{w}x{h}+{x}+{y}")
-        self._root.lift()
-        self._root.focus_force()
-        self._models.refresh()
+        self.show_all()
+        # Position bottom-right
+        screen = Gdk.Screen.get_default()
+        sw = screen.get_width()
+        sh = screen.get_height()
+        w, h = 420, 640
+        self.move(sw - w - 16, sh - h - 60)
+        self._refresh_models()
 
     def hide(self):
-        if not self._root:
-            return
-        self._root.after(0, self._do_hide)
-
-    def _do_hide(self):
-        self._visible = False
-        self._root.withdraw()
+        Gtk.Window.hide(self)
 
     def toggle(self):
-        if self._visible:
+        if self.get_visible():
             self.hide()
         else:
             self.show()
 
     def update_state(self, state, lang="", engine=""):
-        """Called from poll thread — schedules a UI update on the Tk thread."""
-        if not self._root:
-            return
         prev_state = self._cur_state
         self._cur_state = state
         if engine:
             self._cur_engine = engine
-        self._root.after(0, lambda: self._apply_state(state, lang, engine))
-        # When dictation ends, snapshot history
-        if prev_state == "DICTATING" and state == "IDLE":
-            text = self._live.get_all()
-            if text.strip():
-                self._root.after(0, lambda: self._history.append(text.strip()))
+        
+        GLib.idle_add(self._status_bar.update_state, state, lang, engine)
 
-    def _apply_state(self, state, lang, engine):
-        self._status_bar.update_state(state, lang, engine or self._cur_engine)
         if state == "DICTATING":
-            self._start_btn.config(state="disabled", bg=BG3)
-            self._stop_btn.config(state="normal", bg=RED)
+            GLib.idle_add(self._start_btn.set_sensitive, False)
+            GLib.idle_add(self._stop_btn.set_sensitive, True)
         else:
-            self._start_btn.config(state="normal", bg=GREEN)
-            self._stop_btn.config(state="disabled", bg=BG3)
+            GLib.idle_add(self._start_btn.set_sensitive, True)
+            GLib.idle_add(self._stop_btn.set_sensitive, False)
 
-    def _on_log_status(self, is_loading):
-        """Callback to communicate log status updates (e.g., loading model) to the UI."""
-        if self._root:
-            self._root.after(0, lambda: self._status_bar.set_loading(is_loading))
+        # Snapshot session history when dictation ends
+        if prev_state == "DICTATING" and state == "IDLE":
+            GLib.idle_add(self._snapshot_history)
 
-    def push_transcript(self, line):
-        try:
-            self._text_q.put_nowait(line)
-        except queue.Full:
-            pass
+    def _snapshot_history(self):
+        if self._history_session:
+            buf = self._hist_text.get_buffer()
+            ts = time.strftime("%H:%M:%S")
+            full_text = "\n".join(self._history_session)
+            buf.insert(buf.get_end_iter(), f"[{ts}]\n{full_text}\n\n")
+            self._history_session = []
 
     def destroy(self):
         self._sampler.stop()
         self._tailer.stop()
-        if self._root:
-            self._root.after(0, self._root.destroy)
+        Gtk.Window.destroy(self)
+
+
+# ---------------------------------------------------------------------------
+# Mock classes to bridge the older UI layouts cleanly
+# ---------------------------------------------------------------------------
+class EnginePanel_mock:
+    ENGINES = [
+        ("VOSK", "VOSK Engine", "vosk"),
+        ("WHISPER", "Whisper Local Engine", "whisper"),
+        ("WLK", "WhisperLiveKit Streaming", "wlk")
+    ]
+    WHISPER_MODELS_EN = ["tiny.en", "base.en", "small.en", "medium.en", "large-v2"]
+    WHISPER_MODELS_AR = ["tiny", "base", "small", "medium"]

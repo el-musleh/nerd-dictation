@@ -53,6 +53,10 @@ export PUNCTUATE
 # VAD tuning for the VOSK (VAD_GATE) path.
 export VAD_THRESHOLD
 export VAD_MIN_SILENCE_MS
+# WLK streaming tuning.
+export WLK_CHUNK
+export WLK_MODEL
+export WLK_LANG
 
 # Parse arguments
 VERBOSE=false

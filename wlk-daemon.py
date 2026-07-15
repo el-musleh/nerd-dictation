@@ -35,7 +35,9 @@ WLK_SERVER_PORT = int(os.environ.get("WLK_PORT", "8000"))
 # watches this to decide whether to fall back to VOSK.
 WLK_READY_FILE = os.path.expanduser("~/.cache/nerd-dictation/wlk-ready")
 SAMPLE_RATE = 16000
-CHUNK_DURATION = 0.25  # seconds per PCM chunk sent
+# Seconds per PCM chunk sent to the WLK server. Smaller = lower latency,
+# larger = less overhead. Tunable via WLK_CHUNK (0.1-0.5).
+CHUNK_DURATION = float(os.environ.get("WLK_CHUNK", "0.25"))
 
 # ---------------------------------------------------------------------------
 # Server lifecycle
