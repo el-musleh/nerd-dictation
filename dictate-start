@@ -39,6 +39,7 @@ esac
 # default -> the export hook is a no-op. VOSK doesn't use these.
 export WHISPER_EXPORT_PATH
 export OUTPUT_FORMAT
+export PUNCTUATE
 
 # Parse arguments
 VERBOSE=false

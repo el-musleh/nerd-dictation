@@ -17,12 +17,15 @@ AMODEL=${ARABIC_WHISPER_MODEL:-small}
 
 OFMT=${OUTPUT_FORMAT:-srt}
 
+PUNCT=${PUNCTUATE:-off}
+
 # Build combobox lists with current value first (yad uses ! separator)
 ENGINE_LIST="$ENGINE!VOSK!WHISPER!WLK"
 WMODE_LIST="$WMODE!warm-cache!ipc"
 EMODEL_LIST="$EMODEL!small.en!base.en!tiny.en!medium.en"
 AMODEL_LIST="$AMODEL!small!base!medium"
 OFMT_LIST="$OFMT!srt!vtt!json!text"
+PUNCT_LIST="$PUNCT!off!on"
 
 RESULTS=$(yad --title="STT Settings" --form --width=420 \
     --field="English Engine:CB"       "$ENGINE_LIST" \
@@ -31,6 +34,7 @@ RESULTS=$(yad --title="STT Settings" --form --width=420 \
     --field="English Whisper Model:CB" "$EMODEL_LIST" \
     --field="Arabic Whisper Model:CB"  "$AMODEL_LIST" \
     --field="Output Format:CB"        "$OFMT_LIST" \
+    --field="Punctuate VOSK:CB"       "$PUNCT_LIST" \
     --field="Apply on next dictation start:LBL" "" \
     --button="Save":0 --button="Cancel":1)
 EXIT=$?
@@ -42,6 +46,7 @@ if [ "$EXIT" -eq 0 ]; then
     EM=$(echo "$RESULTS" | cut -d'|' -f4)
     AM=$(echo "$RESULTS" | cut -d'|' -f5)
     OF=$(echo "$RESULTS" | cut -d'|' -f6)
+    PC=$(echo "$RESULTS" | cut -d'|' -f7)
 
     _set() {  # key newvalue -> replace or append in config.sh
         local k="$1" v="$2"
@@ -57,4 +62,5 @@ if [ "$EXIT" -eq 0 ]; then
     _set ENGLISH_WHISPER_MODEL "$EM"
     _set ARABIC_WHISPER_MODEL  "$AM"
     _set OUTPUT_FORMAT         "$OF"
+    _set PUNCTUATE             "$PC"
 fi

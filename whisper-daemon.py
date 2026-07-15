@@ -79,9 +79,16 @@ def transcribe(model_name, language, compute_type, audio_bytes):
     export_path = os.environ.get("WHISPER_EXPORT_PATH")
     if export_path:
         fmt = os.environ.get("OUTPUT_FORMAT", "srt")
+        out_text = text
+        if os.environ.get("PUNCTUATE", "off") == "on":
+            try:
+                from punctuate import punctuate as _punctuate
+                out_text = _punctuate(text, language or "en")
+            except Exception as ex:  # noqa: BLE001
+                sys.stderr.write(f"[whisper-daemon] punctuate failed: {ex}\n")
         try:
             from export_subs import export as _export
-            _export(text, seg_records, fmt, export_path)
+            _export(out_text, seg_records, fmt, export_path)
         except Exception as ex:  # noqa: BLE001
             sys.stderr.write(f"[whisper-daemon] export failed: {ex}\n")
     return text
