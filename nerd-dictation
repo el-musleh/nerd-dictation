@@ -1127,6 +1127,159 @@ def text_from_whisper_pipe(
     return False
 
 
+def text_from_whisper_ipc(
+    *,
+    whisper_model_name: str,
+    whisper_device: str,
+    language: str,
+    exit_fn: Callable[..., int],
+    process_fn: Callable[[str], str],
+    handle_fn: Callable[[int, str], None],
+    timeout: float,
+    idle_time: float,
+    input_method: str,
+    pulse_device_name: str = "",
+    socket_path: str = "",
+    verbose: int = 0,
+) -> bool:
+    """Record audio, send to whisper-daemon over a Unix socket, type the reply."""
+    import signal as _signal
+    import socket as _socket
+    import struct as _struct
+    import json as _json
+    import tempfile as _tempfile
+    import wave as _wave
+
+    if not socket_path or not os.path.exists(socket_path):
+        sys.stderr.write(
+            "IPC mode requires whisper-daemon running at %r.\n"
+            "Start it: systemctl --user start whisper-daemon.service\n" % socket_path
+        )
+        return False
+
+    sample_rate = 16000
+    compute_type = "float16" if whisper_device == "cuda" else "int8"
+
+    ps, stdout = recording_proc_with_non_blocking_stdout(input_method, sample_rate, pulse_device_name)
+
+    try:
+        subprocess.Popen(
+            ["notify-send", "Dictation Ready", "Now listening — speak now.",
+             "--icon=microphone", "--app-name=nerd-dictation"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except FileNotFoundError:
+        pass
+
+    handle_fn(SIMULATE_INPUT_CODE_COMMAND, "SETUP")
+
+    tmp = _tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    wf = _wave.open(tmp.name, "wb")
+    wf.setnchannels(1)
+    wf.setsampwidth(2)
+    wf.setframerate(sample_rate)
+
+    audio_chunks: List[bytes] = []
+    code = 0
+    use_timeout = timeout != 0.0
+    if use_timeout:
+        timeout_silence_prev = time.time()
+    if idle_time > 0.0:
+        idle_time_prev = time.time()
+
+    while code == 0:
+        code = exit_fn(False)
+        if idle_time > 0.0:
+            idle_time_curr = time.time()
+            idle_time_test = idle_time - (idle_time_curr - idle_time_prev)
+            if idle_time_test > 0.0:
+                time.sleep(idle_time_test)
+                idle_time_prev = time.time()
+            else:
+                idle_time_prev = idle_time_curr
+        try:
+            data = stdout.read(1_048_576)
+        except OSError:
+            data = None
+        if data:
+            audio_chunks.append(data)
+            wf.writeframes(data)
+            if use_timeout:
+                chunk_int16 = np.frombuffer(data, dtype=np.int16)
+                rms = float(np.sqrt(np.mean(chunk_int16.astype(np.float32) ** 2)))
+                if rms > 200.0:
+                    timeout_silence_prev = time.time()
+                elif time.time() - timeout_silence_prev > timeout:
+                    if code == 0:
+                        code = 1
+
+    wf.close()
+    os.kill(ps.pid, _signal.SIGINT)
+    handle_fn(SIMULATE_INPUT_CODE_COMMAND, "TEARDOWN")
+
+    if code == -1:
+        sys.stderr.write("Text input canceled!\n")
+        sys.exit(0)
+    if not audio_chunks:
+        sys.stderr.write("Whisper IPC: no audio captured.\n")
+        return False
+
+    header = _json.dumps({
+        "model": whisper_model_name,
+        "language": language,
+        "compute_type": compute_type,
+    }).encode("utf-8")
+
+    try:
+        with _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM) as s:
+            s.connect(socket_path)
+            s.sendall(_struct.pack(">I", len(header)) + header)
+            with open(tmp.name, "rb") as f:
+                chunk = f.read(65536)
+                while chunk:
+                    s.sendall(chunk)
+                    chunk = f.read(65536)
+            s.shutdown(_socket.SHUT_WR)
+            raw = b""
+            while True:
+                c = s.recv(65536)
+                if not c:
+                    break
+                raw += c
+    except OSError as ex:
+        sys.stderr.write("whisper-daemon IPC error: %s\n" % ex)
+        return False
+    finally:
+        try:
+            os.remove(tmp.name)
+        except OSError:
+            pass
+
+    if len(raw) < 4:
+        sys.stderr.write("whisper-daemon returned invalid response.\n")
+        return False
+    hlen = _struct.unpack(">I", raw[:4])[0]
+    try:
+        resp = _json.loads(raw[4:4 + hlen].decode("utf-8"))
+    except Exception:
+        sys.stderr.write("whisper-daemon returned invalid response.\n")
+        return False
+
+    if "error" in resp:
+        sys.stderr.write("whisper-daemon error: %s\n" % resp["error"])
+        return False
+
+    text = (resp.get("text") or "").strip()
+    if verbose >= 1:
+        sys.stderr.write("Transcribed (ipc): %r\n" % text)
+    if text:
+        text = process_fn(text)
+        if text:
+            handle_fn(0, text)
+            return True
+    return False
+
+
 def text_from_vosk_pipe(
     *,
     vosk_model_dir: str,
@@ -1651,19 +1804,35 @@ def main_begin(
         assert False
 
     if engine == "WHISPER":
-        found_any = text_from_whisper_pipe(
-            whisper_model_name=whisper_model_name,
-            whisper_device=whisper_device,
-            language=language,
-            exit_fn=exit_fn,
-            process_fn=process_fn,
-            handle_fn=handle_fn,
-            timeout=timeout,
-            idle_time=idle_time,
-            input_method=input_method,
-            pulse_device_name=pulse_device_name,
-            verbose=verbose,
-        )
+        if whisper_daemon_mode == "ipc":
+            found_any = text_from_whisper_ipc(
+                whisper_model_name=whisper_model_name,
+                whisper_device=whisper_device,
+                language=language,
+                exit_fn=exit_fn,
+                process_fn=process_fn,
+                handle_fn=handle_fn,
+                timeout=timeout,
+                idle_time=idle_time,
+                input_method=input_method,
+                pulse_device_name=pulse_device_name,
+                socket_path=whisper_socket,
+                verbose=verbose,
+            )
+        else:
+            found_any = text_from_whisper_pipe(
+                whisper_model_name=whisper_model_name,
+                whisper_device=whisper_device,
+                language=language,
+                exit_fn=exit_fn,
+                process_fn=process_fn,
+                handle_fn=handle_fn,
+                timeout=timeout,
+                idle_time=idle_time,
+                input_method=input_method,
+                pulse_device_name=pulse_device_name,
+                verbose=verbose,
+            )
     else:
         found_any = text_from_vosk_pipe(
             vosk_model_dir=vosk_model_dir,
@@ -2074,6 +2243,21 @@ def argparse_create_begin(subparsers: "argparse._SubParsersAction[argparse.Argum
     )
 
     subparse.add_argument(
+        "--whisper-daemon-mode",
+        dest="whisper_daemon_mode",
+        default="warm-cache",
+        choices=("warm-cache", "ipc"),
+        help="warm-cache: load model in this process (daemon warms page cache). "
+             "ipc: send audio to whisper-daemon over a Unix socket (zero local load).",
+    )
+    subparse.add_argument(
+        "--whisper-socket",
+        dest="whisper_socket",
+        default=os.path.expanduser("~/.cache/nerd-dictation/whisper.sock"),
+        help="Unix socket path used in ipc mode.",
+    )
+
+    subparse.add_argument(
         "--whisper-model",
         dest="whisper_model_name",
         default="small",
@@ -2154,6 +2338,8 @@ def argparse_create_begin(subparsers: "argparse._SubParsersAction[argparse.Argum
             engine=args.engine,
             whisper_model_name=args.whisper_model_name,
             whisper_device=args.whisper_device,
+            whisper_daemon_mode=args.whisper_daemon_mode,
+            whisper_socket=args.whisper_socket,
             language=args.language,
         ),
     )
