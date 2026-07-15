@@ -16,7 +16,7 @@ EMODEL=${ENGLISH_WHISPER_MODEL:-small.en}
 AMODEL=${ARABIC_WHISPER_MODEL:-small}
 
 # Build combobox lists with current value first (yad uses ! separator)
-ENGINE_LIST="$ENGINE!VOSK!WHISPER"
+ENGINE_LIST="$ENGINE!VOSK!WHISPER!WLK"
 WMODE_LIST="$WMODE!warm-cache!ipc"
 EMODEL_LIST="$EMODEL!small.en!base.en!tiny.en!medium.en"
 AMODEL_LIST="$AMODEL!small!base!medium"
