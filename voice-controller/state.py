@@ -1,3 +1,5 @@
+"""state.py — STT state file parser for voice-controller."""
+
 import os
 
 
@@ -32,6 +34,33 @@ def parse_dictate_state(path, _pid_alive=None):
     except (OSError, ValueError):
         pass
     return 'IDLE'
+
+
+def parse_dictate_state_full(path, _pid_alive=None):
+    """Return (state, lang_name, engine, pid) from ~/.dictate-state.
+
+    state is 'DICTATING' or 'IDLE'.
+    lang_name / engine are strings ('' if unknown).
+    pid is int or None.
+    """
+    alive = _pid_alive if _pid_alive is not None else _os_kill_alive
+    try:
+        data = {}
+        with open(path) as fh:
+            for line in fh:
+                if ':' in line:
+                    k, v = line.strip().split(':', 1)
+                    data[k] = v.strip()
+        pid_str = data.get('PID', '')
+        lang_name = data.get('LANG_NAME', '')
+        engine = data.get('ENGINE', '')
+        if pid_str:
+            pid = int(pid_str)
+            if alive(pid):
+                return ('DICTATING', lang_name, engine, pid)
+    except (OSError, ValueError):
+        pass
+    return ('IDLE', '', '', None)
 
 
 def _os_kill_alive(pid):

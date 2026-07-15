@@ -17,6 +17,16 @@ if [ -f "$MODEL_BASE/config.sh" ]; then
     source "$MODEL_BASE/config.sh"
 fi
 
+# ── Auto-start the voice-controller tray icon if it is not running ─────────
+VC_SCRIPT="$SCRIPT_DIR/voice-controller/voice-controller.py"
+if [ -f "$VC_SCRIPT" ] && ! pgrep -f "voice-controller.py" > /dev/null 2>&1; then
+    nohup /usr/bin/python3 "$VC_SCRIPT" \
+        >> "$HOME/.local/share/voice-controller/controller.log" 2>&1 &
+    # Give the tray a moment to register with the system tray
+    sleep 1
+fi
+# ───────────────────────────────────────────────────────────────────────────
+
 # Validate ENGLISH_ENGINE against the canonical backend registry (fail fast on typos).
 if ! python3 "$SCRIPT_DIR/backends.py" validate "$ENGLISH_ENGINE" >/dev/null 2>&1; then
     zenity --error --title="Dictation Error" \

@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """
-Voice Controller — unified system-tray for TTS (speak-aloud-linux) and
-STT (nerd-dictation) on this machine.
+Voice Controller — system-tray + rich popup panel for nerd-dictation (STT).
 
-Pure controller: it polls each tool's native state file and shells out to the
-existing bash scripts via absolute paths. It does NOT reimplement any
-TTS/STT logic. Mirrors the architecture of tts-daemon.py.
+Architecture:
+  - pystray tray icon (blue=idle, red=dictating) runs in main thread.
+  - 0.5s poll thread watches ~/.dictate-state and updates icon + popup.
+  - popup.py provides the Tkinter floating control panel in its own thread.
 
-Single-instance (lock), 0.5s poll thread, PIL-drawn status icons.
-
-Run:  python3 voice-controller.py
+Clicking the tray icon toggles the popup.
+Right-click menu: Start / Stop / Show Panel / Quit.
 """
 
 import fcntl
@@ -24,6 +23,7 @@ import time
 from icons import icon_for
 from menu import build_menu, STT_DIR, run_script
 import state as statemod
+from popup import PopupPanel
 
 import pystray
 
@@ -36,8 +36,11 @@ DICTATE_STATE_FILE = os.path.expanduser('~/.dictate-state')
 def _setup_logging():
     os.makedirs(LOG_DIR, exist_ok=True)
     logger = logging.getLogger('voice-controller')
+    if logger.handlers:
+        return logger  # already configured (avoid duplicates)
     logger.setLevel(logging.DEBUG)
-    fh = logging.handlers.RotatingFileHandler(LOG_FILE, maxBytes=1_048_576, backupCount=1)
+    fh = logging.handlers.RotatingFileHandler(
+        LOG_FILE, maxBytes=1_048_576, backupCount=1)
     fh.setFormatter(logging.Formatter(
         '%(asctime)s [%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
     ch = logging.StreamHandler(sys.stderr)
@@ -48,22 +51,28 @@ def _setup_logging():
 
 
 class VoiceController:
-    def __init__(self, mode=None):
+    def __init__(self):
         self.log = _setup_logging()
-        # STT-only controller: always run in STT mode (red mic icon).
         self.mode = 'STT'
         self._state = None
         self._running = True
         self._lock_fd = None
 
         self._acquire_lock()
-        self.log.info('Voice Controller started (PID %d), mode=%s', os.getpid(), self.mode)
+        self.log.info('Voice Controller started (PID %d)', os.getpid())
 
-        self._build_handlers()
+        # Build popup panel (spawns its own Tk thread)
+        self._popup = PopupPanel(
+            on_start=self._on_stt_start,
+            on_stop=self._on_stt_stop,
+            on_quit=self._on_quit_from_popup,
+        )
+
         self._build_icon()
         self._start_poll()
 
-    # ---- logging -------------------------------------------------------
+    # ---- Lock --------------------------------------------------------------
+
     def _acquire_lock(self):
         try:
             fd = open(LOCK_FILE, 'w')
@@ -75,13 +84,7 @@ class VoiceController:
             self.log.error('Already running — exiting')
             sys.exit(0)
 
-    # ---- handlers (shell-out) ------------------------------------------
-    def _build_handlers(self):
-        self._handlers = {
-            'on_stt_start': self._on_stt_start,
-            'on_stt_stop': self._on_stt_stop,
-            'on_stt_settings': self._on_stt_settings,
-        }
+    # ---- Actions -----------------------------------------------------------
 
     def _on_stt_start(self, icon=None, item=None):
         run_script(os.path.join(STT_DIR, 'dictate-start'), self.log)
@@ -89,23 +92,38 @@ class VoiceController:
     def _on_stt_stop(self, icon=None, item=None):
         run_script(os.path.join(STT_DIR, 'dictate-stop'), self.log)
 
-    def _on_stt_settings(self, icon=None, item=None):
-        # Guard against launching two settings dialogs.
-        if subprocess.run(['pgrep', '-f', 'stt-settings.sh'],
-                          capture_output=True).returncode == 0:
-            return
-        run_script(os.path.join(STT_DIR, 'stt-settings.sh'), self.log)
+    def _on_show_panel(self, icon=None, item=None):
+        self._popup.toggle()
 
-    # ---- icon / menu ---------------------------------------------------
+    def _on_quit_from_popup(self):
+        """Called from popup's Quit button."""
+        self._shutdown()
+
+    # ---- Tray icon ---------------------------------------------------------
+
     def _build_icon(self):
         self._icon = pystray.Icon(
             'voice-controller',
             icon=icon_for('IDLE'),
-            title='Voice Controller — STT',
-            menu=build_menu(self, self._handlers, self._on_quit),
+            title='Voice Controller',
+            menu=self._make_menu(),
+        )
+        # Left-click toggles popup (pystray default_action)
+        self._icon.default_action = self._on_show_panel
+
+    def _make_menu(self):
+        return pystray.Menu(
+            pystray.MenuItem('Show / Hide Panel',
+                             self._on_show_panel, default=True),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem('Start Dictation  (Super+H)', self._on_stt_start),
+            pystray.MenuItem('Stop Dictation   (⇧Super+H)', self._on_stt_stop),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem('Quit', self._on_quit),
         )
 
-    # ---- polling -------------------------------------------------------
+    # ---- Polling -----------------------------------------------------------
+
     def _start_poll(self):
         def loop():
             while self._running:
@@ -114,45 +132,35 @@ class VoiceController:
         threading.Thread(target=loop, daemon=True).start()
 
     def _tick(self):
-        # STT-only: poll the dictation state file.
-        state = statemod.parse_dictate_state(DICTATE_STATE_FILE)
+        state_tuple = statemod.parse_dictate_state_full(DICTATE_STATE_FILE)
+        state = state_tuple[0]
+        lang = state_tuple[1] if len(state_tuple) > 1 else ""
+        engine = state_tuple[2] if len(state_tuple) > 2 else ""
+
         if state != self._state:
             self._state = state
-            self._apply_state(state)
+            self._apply_state(state, lang, engine)
 
-    @staticmethod
-    def _read_file(path):
-        try:
-            with open(path) as f:
-                return f.read()
-        except (FileNotFoundError, OSError):
-            return ''
+        # Always push state to popup (lang/engine may change even if state doesn't)
+        self._popup.update_state(state, lang, engine)
 
-    def _apply_state(self, state):
-        label = '●  Dictating' if state == 'DICTATING' else '○  Ready'
-        self._refresh_title(label)
+    def _apply_state(self, state, lang="", engine=""):
         self._icon.icon = icon_for(state)
-        # Force the indicator to recreate the icon (same trick as tts-daemon).
-        for fn in ('_hide', '_show'):
-            if hasattr(self._icon, fn):
-                getattr(self._icon, fn)()
-        self.log.info('State [STT]: %s', state)
-
-    def _last_label(self):
-        if self._state is None:
-            return None
-        return '●  Dictating' if self._state == 'DICTATING' else '○  Ready'
-
-    def _refresh_title(self, label):
+        label = '●  Dictating' if state == 'DICTATING' else '○  Ready'
         self._icon.title = f'Voice Controller — {label}'
+        self.log.info('State [STT]: %s  lang=%s  engine=%s', state, lang, engine)
 
-    # ---- quit ----------------------------------------------------------
+    # ---- Quit --------------------------------------------------------------
+
     def _on_quit(self, icon, item):
+        self._shutdown()
+
+    def _shutdown(self):
         self.log.info('Quit requested')
         self._running = False
-        # Stop dictation if active.
         if statemod.parse_dictate_state(DICTATE_STATE_FILE) == 'DICTATING':
             self._on_stt_stop()
+        self._popup.destroy()
         if self._lock_fd:
             try:
                 fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
@@ -163,20 +171,6 @@ class VoiceController:
 
     def run(self):
         self._icon.run()
-
-
-def _setup_logging():
-    os.makedirs(LOG_DIR, exist_ok=True)
-    logger = logging.getLogger('voice-controller')
-    logger.setLevel(logging.DEBUG)
-    fh = logging.handlers.RotatingFileHandler(LOG_FILE, maxBytes=1_048_576, backupCount=1)
-    fh.setFormatter(logging.Formatter(
-        '%(asctime)s [%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
-    ch = logging.StreamHandler(sys.stderr)
-    ch.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
-    logger.addHandler(fh)
-    logger.addHandler(ch)
-    return logger
 
 
 def main():
