@@ -57,23 +57,18 @@ def transcribe(model_name, language, compute_type, audio_bytes):
         ),
         condition_on_previous_text=False,  # avoid hallucination drift across turns
     )
-    kept = []
-    seg_records = []
-    for seg in segments:
-        text = seg.text.strip()
-        # drop empty segments
-        if not text:
-            continue
-        # drop sub-0.3s non-speech leftovers (breath/click artifacts)
-        start = getattr(seg, "start", None)
-        end = getattr(seg, "end", None)
-        if start is not None and end is not None:
-            if (end - start) < 0.3 and len(text) <= 2:
-                continue
-        kept.append(text)
-        if start is not None and end is not None:
-            seg_records.append({"start": start, "end": end, "text": text})
-    text = " ".join(kept).strip()
+    # Use the shared artifact-suppression filter (drops sub-utterance blips /
+    # single-letter leftovers) so VOSK-after-VAD and WLK share the same rules.
+    from filters import drop_low_confidence, finalize_text
+    seg_dicts = [
+        {"start": getattr(seg, "start", None),
+         "end": getattr(seg, "end", None),
+         "text": getattr(seg, "text", "")}
+        for seg in segments
+    ]
+    kept_segs = drop_low_confidence(seg_dicts, min_duration_s=0.3, min_chars=2)
+    seg_records = kept_segs  # already {start,end,text}
+    text = finalize_text(seg_records)
 
     # Optional export (subtitles / structured formats). Off unless configured.
     export_path = os.environ.get("WHISPER_EXPORT_PATH")
