@@ -19,6 +19,8 @@ OFMT=${OUTPUT_FORMAT:-srt}
 
 VT=${VAD_THRESHOLD:-0.5}
 VS=${VAD_MIN_SILENCE_MS:-300}
+PUNCT=${PUNCTUATE:-off}
+WCHUNK=${WLK_CHUNK:-0.25}
 
 # Build combobox lists with current value first (yad uses ! separator)
 ENGINE_LIST="$ENGINE!VOSK!WHISPER!WLK"
@@ -38,6 +40,7 @@ RESULTS=$(yad --title="STT Settings" --form --width=460 \
     --field="Arabic Whisper Model:CB"  "$AMODEL_LIST" \
     --field="Output Format:CB"        "$OFMT_LIST" \
     --field="Punctuate VOSK:CB"       "$PUNCT_LIST" \
+    --field="WLK Chunk (s):NUM"       "$WCHUNK" \
     --field="Apply on next dictation start:LBL" "" \
     --button="Save":0 --button="Cancel":1)
 EXIT=$?
@@ -52,6 +55,7 @@ if [ "$EXIT" -eq 0 ]; then
     AM=$(echo "$RESULTS" | cut -d'|' -f7)
     OF=$(echo "$RESULTS" | cut -d'|' -f8)
     PC=$(echo "$RESULTS" | cut -d'|' -f9)
+    WC=$(echo "$RESULTS" | cut -d'|' -f10 | grep -o '[0-9.]\+' | head -1); WC=${WC:-0.25}
 
     _set() {  # key newvalue -> replace or append in config.sh
         local k="$1" v="$2"
@@ -70,4 +74,5 @@ if [ "$EXIT" -eq 0 ]; then
     _set ARABIC_WHISPER_MODEL  "$AM"
     _set OUTPUT_FORMAT         "$OF"
     _set PUNCTUATE             "$PC"
+    _set WLK_CHUNK             "$WC"
 fi
