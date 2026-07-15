@@ -583,6 +583,7 @@ class PopupPanel(Gtk.Window):
 
         self._cfg = read_config()
         self._history_session = []
+        self._partial_start = None
         self._cur_state = "IDLE"
         self._cur_engine = self._cfg.get("ENGLISH_ENGINE", "VOSK")
 
@@ -951,8 +952,9 @@ class PopupPanel(Gtk.Window):
 
     def _clear_history(self, button):
         self._history_session = []
-        self._hist_text.get_buffer().set_text("")
         self._live_text.get_buffer().set_text("")
+        self._hist_text.get_buffer().set_text("")
+        self._partial_start = None
 
     def _refresh_models(self):
         for child in self._models_flow.get_children():
@@ -985,6 +987,26 @@ class PopupPanel(Gtk.Window):
             self.move(int(x + event.x - self._drag_x), int(y + event.y - self._drag_y))
 
     # ---- Queue & Log Sync --------------------------------------------------
+    def _ensure_tags(self):
+        buf = self._live_text.get_buffer()
+        table = buf.get_tag_table()
+        if table.lookup("partial") is None:
+            buf.create_tag("partial", foreground="#9598b0", style=Pango.Style.ITALIC)
+        if table.lookup("committed") is None:
+            buf.create_tag("committed", foreground="#e8eaf6")
+
+    def _promote_last_partial(self):
+        """Convert the trailing partial line(s) into committed styling."""
+        buf = self._live_text.get_buffer()
+        if self._partial_start is None:
+            return
+        start = buf.get_iter_at_mark(self._partial_start)
+        end = buf.get_end_iter()
+        buf.remove_tag_by_name("partial", start, end)
+        buf.apply_tag_by_name("committed", start, end)
+        buf.delete_mark(self._partial_start)
+        self._partial_start = None
+
     def _poll_queues(self):
         # Update live transcript TextBuffer
         new_text = []
@@ -992,12 +1014,17 @@ class PopupPanel(Gtk.Window):
             new_text.append(self._text_q.get())
 
         if new_text:
+            self._ensure_tags()
             buf = self._live_text.get_buffer()
-            end_iter = buf.get_end_iter()
+            # Promote the previous trailing line(s) from partial -> committed.
+            self._promote_last_partial()
             for t in new_text:
-                buf.insert(end_iter, t + "\n")
+                # Insert as partial (will be promoted when the next line lands).
+                end_iter = buf.get_end_iter()
+                self._partial_start = buf.create_mark(None, end_iter, True)
+                buf.insert_with_tags_by_name(end_iter, t + "\n", "partial")
                 self._history_session.append(t)
-            
+
             # Auto scroll to bottom
             mark = buf.create_mark(None, buf.get_end_iter(), False)
             self._live_text.scroll_to_mark(mark, 0.0, True, 0.0, 1.0)
@@ -1054,6 +1081,7 @@ class PopupPanel(Gtk.Window):
 
         # Snapshot session history when dictation ends
         if prev_state == "DICTATING" and state == "IDLE":
+            GLib.idle_add(self._promote_last_partial)
             GLib.idle_add(self._snapshot_history)
 
     def _snapshot_history(self):
