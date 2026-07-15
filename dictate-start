@@ -11,6 +11,12 @@ STATE_FILE="$HOME/.dictate-state"
 MODEL_BASE="$HOME/.config/nerd-dictation"
 TIMEOUT=30
 
+# Load runtime switches (env vars override values set in this file).
+if [ -f "$MODEL_BASE/config.sh" ]; then
+    # shellcheck disable=SC1090
+    source "$MODEL_BASE/config.sh"
+fi
+
 # Parse arguments
 VERBOSE=false
 if [ "$1" = "--verbose" ] || [ "$1" = "-v" ]; then
