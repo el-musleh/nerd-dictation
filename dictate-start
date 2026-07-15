@@ -60,6 +60,7 @@ export WLK_CHUNK
 export WLK_MODEL
 export WLK_LANG
 export WLK_POLICY
+export AUTO_LANG
 
 # Parse arguments
 VERBOSE=false

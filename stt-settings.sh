@@ -23,6 +23,7 @@ PUNCT=${PUNCTUATE:-off}
 WCHUNK=${WLK_CHUNK:-0.25}
 WPOL=${WLK_POLICY:-localagreement}
 CTYPE=${COMPUTE_TYPE:-int8}
+AUTOL=${AUTO_LANG:-off}
 
 # Build combobox lists with current value first (yad uses ! separator)
 ENGINE_LIST="$ENGINE!VOSK!WHISPER!WLK"
@@ -33,6 +34,7 @@ OFMT_LIST="$OFMT!srt!vtt!json!text"
 PUNCT_LIST="$PUNCT!off!on"
 WPOL_LIST="$WPOL!localagreement!simulstreaming"
 CTYPE_LIST="$CTYPE!int8!int8_float16!float16"
+AUTOL_LIST="$AUTOL!off!on"
 
 RESULTS=$(yad --title="STT Settings" --form --width=460 \
     --field="English Engine:CB"       "$ENGINE_LIST" \
@@ -47,6 +49,7 @@ RESULTS=$(yad --title="STT Settings" --form --width=460 \
     --field="WLK Chunk (s):NUM"       "$WCHUNK" \
     --field="WLK Policy:CB"           "$WPOL_LIST" \
     --field="Whisper Quantization:CB" "$CTYPE_LIST" \
+    --field="Auto Language (WLK):CB"  "$AUTOL_LIST" \
     --field="Apply on next dictation start:LBL" "" \
     --button="Save":0 --button="Cancel":1)
 EXIT=$?

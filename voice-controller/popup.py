@@ -469,7 +469,7 @@ class WaveformArea(Gtk.DrawingArea):
 # ---------------------------------------------------------------------------
 class StatusWidget(Gtk.Box):
     def __init__(self):
-        super().__init__(orientation=Gtk.Orientation.Horizontal, spacing=8)
+        super().__init__(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self.get_style_context().add_class("status-bar")
         self._state = "IDLE"
         self._lang = ""
@@ -603,6 +603,7 @@ class PopupPanel(Gtk.Window):
         self._build_ui()
         self.connect("button-press-event", self._on_button_press)
         self.connect("motion-notify-event", self._on_motion_notify)
+        self.connect("delete-event", lambda w, e: self.hide_on_delete() or True)
         GLib.timeout_add(150, self._poll_queues)
 
         # Start Gtk main loop on a daemon thread
@@ -613,11 +614,11 @@ class PopupPanel(Gtk.Window):
         Gtk.main()
 
     def _build_ui(self):
-        main_box = Gtk.Box(orientation=Gtk.Orientation.Vertical, spacing=0)
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.add(main_box)
 
         # ── Header bar ──────────────────────────────────────────────────────
-        hdr = Gtk.Box(orientation=Gtk.Orientation.Horizontal, spacing=8)
+        hdr = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         hdr.get_style_context().add_class("header-bar")
         
         lbl_title = Gtk.Label(label="🎙  Voice Controller")
@@ -639,7 +640,7 @@ class PopupPanel(Gtk.Window):
         main_box.pack_start(self._waveform, False, False, 6)
 
         # ── Actions ─────────────────────────────────────────────────────────
-        ctrl_box = Gtk.Box(orientation=Gtk.Orientation.Horizontal, spacing=8)
+        ctrl_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         ctrl_box.set_margin_start(12)
         ctrl_box.set_margin_end(12)
         ctrl_box.set_margin_top(6)
@@ -667,7 +668,7 @@ class PopupPanel(Gtk.Window):
         main_box.pack_start(nb, True, True, 4)
 
         # Tab 1: Live
-        live_box = Gtk.Box(orientation=Gtk.Orientation.Vertical, spacing=6)
+        live_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         live_box.set_margin_top(8)
         live_box.set_margin_bottom(8)
         live_box.set_margin_start(12)
@@ -690,7 +691,7 @@ class PopupPanel(Gtk.Window):
         nb.append_page(live_box, Gtk.Label(label="  Live  "))
 
         # Tab 2: Engine Configuration
-        eng_box = Gtk.Box(orientation=Gtk.Orientation.Vertical, spacing=8)
+        eng_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         eng_box.set_margin_top(12)
         eng_box.set_margin_bottom(12)
         eng_box.set_margin_start(16)
@@ -792,13 +793,13 @@ class PopupPanel(Gtk.Window):
         nb.append_page(eng_box, Gtk.Label(label="  Engine  "))
 
         # Tab 3: History & Shortcuts
-        hist_box = Gtk.Box(orientation=Gtk.Orientation.Vertical, spacing=6)
+        hist_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         hist_box.set_margin_top(8)
         hist_box.set_margin_bottom(8)
         hist_box.set_margin_start(12)
         hist_box.set_margin_end(12)
 
-        hist_hdr = Gtk.Box(orientation=Gtk.Orientation.Horizontal, spacing=8)
+        hist_hdr = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         lbl_hist_title = Gtk.Label(label="📜  Session History")
         hist_hdr.pack_start(lbl_hist_title, False, False, 4)
         
@@ -822,7 +823,7 @@ class PopupPanel(Gtk.Window):
         hist_box.pack_start(scrolled_hist, True, True, 4)
 
         # Keyboard Shortcut reference helper at bottom
-        sh_frame = Gtk.Box(orientation=Gtk.Orientation.Vertical, spacing=4)
+        sh_frame = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         sh_frame.get_style_context().add_class("shortcut-box")
         
         lbl_shortcut_title = Gtk.Label(label="⌨  Quick Shortcuts Reference")
@@ -830,7 +831,7 @@ class PopupPanel(Gtk.Window):
         lbl_shortcut_title.get_style_context().add_class("header-title")
         sh_frame.pack_start(lbl_shortcut_title, False, False, 2)
 
-        sc1 = Gtk.Box(orientation=Gtk.Orientation.Horizontal)
+        sc1 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         lbl_sc1_desc = Gtk.Label(label="Start Dictation:")
         sc1.pack_start(lbl_sc1_desc, False, False, 0)
         lbl_sc1_key = Gtk.Label(label="Super + H")
@@ -838,7 +839,7 @@ class PopupPanel(Gtk.Window):
         sc1.pack_end(lbl_sc1_key, False, False, 0)
         sh_frame.pack_start(sc1, False, False, 2)
 
-        sc2 = Gtk.Box(orientation=Gtk.Orientation.Horizontal)
+        sc2 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         lbl_sc2_desc = Gtk.Label(label="Stop Dictation:")
         sc2.pack_start(lbl_sc2_desc, False, False, 0)
         lbl_sc2_key = Gtk.Label(label="Shift + Super + H")
@@ -851,13 +852,13 @@ class PopupPanel(Gtk.Window):
         nb.append_page(hist_box, Gtk.Label(label="  History  "))
 
         # Tab 4: Models
-        models_box = Gtk.Box(orientation=Gtk.Orientation.Vertical, spacing=6)
+        models_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         models_box.set_margin_top(8)
         models_box.set_margin_bottom(8)
         models_box.set_margin_start(12)
         models_box.set_margin_end(12)
 
-        m_hdr = Gtk.Box(orientation=Gtk.Orientation.Horizontal, spacing=8)
+        m_hdr = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         lbl_m = Gtk.Label(label="📦  Models")
         m_hdr.pack_start(lbl_m, False, False, 4)
         
@@ -867,13 +868,13 @@ class PopupPanel(Gtk.Window):
         m_hdr.pack_end(btn_dl, False, False, 4)
         models_box.pack_start(m_hdr, False, False, 4)
 
-        self._models_flow = Gtk.Box(orientation=Gtk.Orientation.Vertical, spacing=4)
+        self._models_flow = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         models_box.pack_start(self._models_flow, True, True, 4)
 
         nb.append_page(models_box, Gtk.Label(label="  Models  "))
 
         # ── Footer ──────────────────────────────────────────────────────────
-        footer = Gtk.Box(orientation=Gtk.Orientation.Horizontal, spacing=0)
+        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         footer.set_size_request(-1, 32)
         footer.get_style_context().add_class("header-bar")
         
@@ -945,7 +946,7 @@ class PopupPanel(Gtk.Window):
             return
 
         for name, path, size in models:
-            row = Gtk.Box(orientation=Gtk.Orientation.Horizontal, spacing=8)
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
             row.get_style_context().add_class("card-row")
             lbl_name = Gtk.Label(label=f"  📁 {name}")
             row.pack_start(lbl_name, False, False, 4)

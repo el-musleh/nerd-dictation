@@ -140,9 +140,7 @@ class VoiceController:
         if state != self._state:
             self._state = state
             self._apply_state(state, lang, engine)
-
-        # Always push state to popup (lang/engine may change even if state doesn't)
-        self._popup.update_state(state, lang, engine)
+            self._popup.update_state(state, lang, engine)
 
     def _apply_state(self, state, lang="", engine=""):
         self._icon.icon = icon_for(state)
