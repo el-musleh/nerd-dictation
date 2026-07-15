@@ -22,7 +22,8 @@ import threading
 SOCKET_PATH = os.environ.get("WHISPER_SOCKET", os.path.expanduser("~/.cache/nerd-dictation/whisper.sock"))
 PRELOAD_MODELS = os.environ.get("WHISPER_PRELOAD", "small,small.en").split(",")
 DEVICE = os.environ.get("WHISPER_WARM_DEVICE", "cpu")
-COMPUTE = "float16" if DEVICE == "cuda" else "int8"
+# Quantization: int8 default for CPU; float16 for GPU. Override via COMPUTE_TYPE.
+COMPUTE = os.environ.get("COMPUTE_TYPE", "float16" if DEVICE == "cuda" else "int8")
 
 # Model cache keyed by (model, compute_type)
 _MODELS = {}
