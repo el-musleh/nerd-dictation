@@ -45,11 +45,18 @@ fi
 # Signal the dictation process to stop recording and finalise.
 # For VOSK (progressive): text is already typed; this flushes any remaining words.
 # For Whisper (deferred): this triggers transcription — we must NOT kill the process yet.
-"$NERD_DICTATION" end 2>/dev/null
+# For WLK: wlk-daemon.py manages its own server; stop it directly.
+if [ "$ENGINE" = "WLK" ]; then
+    pkill -f "wlk-daemon.py" 2>/dev/null
+    pkill -f "whisperlivekit" 2>/dev/null
+    pkill -f "wlk " 2>/dev/null
+else
+    "$NERD_DICTATION" end 2>/dev/null
+fi
 
 # Wait for the process to finish naturally (critical for Whisper, harmless for VOSK).
 # Whisper transcribes after recording stops, so killing early would lose all output.
-if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+if [ "$ENGINE" != "WLK" ] && [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
     WAIT_MAX=60   # Maximum half-seconds to wait (30 seconds total)
     WAIT_COUNT=0
     while kill -0 "$PID" 2>/dev/null && [ "$WAIT_COUNT" -lt "$WAIT_MAX" ]; do

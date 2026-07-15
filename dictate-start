@@ -72,6 +72,7 @@ fi
 
 # Map layout to engine and model settings
 USE_WHISPER=false
+USE_WLK=false
 case "$CURRENT_LAYOUT" in
     us)
         LANG_NAME="English"
@@ -81,6 +82,9 @@ case "$CURRENT_LAYOUT" in
             WHISPER_MODEL="$ENGLISH_WHISPER_MODEL"   # small.en
             WHISPER_LANG="en"
             WHISPER_TOOL="XDOTOOL"
+        elif [ "$ENGLISH_ENGINE" = "WLK" ]; then
+            USE_WLK=true
+            USE_WHISPER=false
         else
             USE_WHISPER=false
             MODEL_DIR="$MODEL_BASE/vosk-model-en-us-0.22"
@@ -103,7 +107,7 @@ case "$CURRENT_LAYOUT" in
 esac
 
 # For VOSK engine: check that the model directory exists
-if [ "$USE_WHISPER" = "false" ] && [ ! -d "$MODEL_DIR" ]; then
+if [ "$USE_WLK" = "false" ] && [ "$USE_WHISPER" = "false" ] && [ ! -d "$MODEL_DIR" ]; then
     zenity --error --title="Model Not Found" --text="$LANG_NAME model not installed.\n\nPath: $MODEL_DIR\n\nDownload from:\nhttps://alphacephei.com/vosk/models"
     notify-send "Dictation Failed" "$LANG_NAME model not found" --icon=dialog-error --app-name="nerd-dictation" 2>/dev/null
     exit 1
@@ -114,7 +118,15 @@ pkill -f "nerd-dictation begin" 2>/dev/null
 sleep 0.3
 
 # Start dictation
-if [ "$USE_WHISPER" = "true" ]; then
+if [ "$USE_WLK" = "true" ]; then
+    ENGINE="WLK"
+    # WhisperLiveKit real-time streaming backend. wlk-daemon.py launches the
+    # WLK server + streams mic audio + types committed text (xdotool).
+    WLK_MODEL="${WLK_MODEL:-small}"
+    WLK_LANG="${WLK_LANG:-en}"
+    "$SCRIPT_DIR/wlk-daemon.py" --model "$WLK_MODEL" --language "$WLK_LANG" \
+        >> /tmp/nerd-dictation-en.log 2>&1 &
+elif [ "$USE_WHISPER" = "true" ]; then
     ENGINE="WHISPER"
     DAEMON_MODE_ARGS=(--whisper-daemon-mode "$WHISPER_DAEMON_MODE")
     if [ "$WHISPER_DAEMON_MODE" = "ipc" ]; then

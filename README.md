@@ -32,10 +32,28 @@ was **deleted** — its language-switching logic was already absorbed into
 `docs/auto-switch-reference/` for reference.
 
 `~/.config/nerd-dictation/config.sh` — engine switches:
-`ENGLISH_ENGINE` (VOSK|WHISPER), `VOSK_TIMEOUT`, `WHISPER_DAEMON_MODE`
-(warm-cache|ipc), `ENGLISH_WHISPER_MODEL`, `ARABIC_WHISPER_MODEL`.
+`ENGLISH_ENGINE` (VOSK|WHISPER|WLK), `VOSK_TIMEOUT`, `WHISPER_DAEMON_MODE`
+(warm-cache|ipc), `ENGLISH_WHISPER_MODEL`, `ARABIC_WHISPER_MODEL`,
+`WLK_MODEL` (tiny/base/small — use tiny/base on CPU), `WLK_LANG`.
 
 Edit it via the tray **Show Settings** button, or directly.
+
+## English backends
+
+- `VOSK` — fast, no VAD (more artifacts from breath/click).
+- `WHISPER` — faster-whisper whole-clip + VAD (current default).
+- `WLK` — **WhisperLiveKit** real-time streaming + Silero VAD. Best artifact
+  resistance (incremental streaming, VAD-gated). On this CPU-only box use
+  `WLK_MODEL=tiny` or `base`; `small` is slower. Set `ENGLISH_ENGINE=WLK`.
+  Implemented in `wlk-daemon.py` (launches `wlk serve --pcm-input`, streams
+  mic via parec, types committed text with xdotool).
+
+## Evaluated-but-not-adopted (sibling folders under /home/steve/dev/stt/)
+
+- `whisper_streaming/` — reference only. Original 2023 LocalAgreement research
+  repo; its own README marks it outdated. WhisperLiveKit is its successor.
+- `WhisperS2T-transcriber/` — batch/file GUI transcriber. Not real-time; keep
+  as a standalone bulk-transcription tool, not wired into live dictation.
 
 ## Run
 
