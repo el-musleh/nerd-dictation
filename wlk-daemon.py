@@ -43,11 +43,19 @@ CHUNK_DURATION = float(os.environ.get("WLK_CHUNK", "0.25"))
 # Server lifecycle
 # ---------------------------------------------------------------------------
 def start_server(model: str, language: str) -> subprocess.Popen:
+    # Streaming policy: local agreement (default, more accurate) or
+    # simul-streaming (lower latency, AlignAtt). Tunable via WLK_POLICY.
+    policy = os.environ.get("WLK_POLICY", "localagreement")
+    if policy in ("1", "simulstreaming"):
+        policy = "simulstreaming"
+    else:
+        policy = "localagreement"
     cmd = [
         WLK_VENV_PYTHON, "-m", "whisperlivekit.cli",
         "serve",
         "--pcm-input",
         "--model", model,
+        "--backend-policy", policy,
         "--host", WLK_SERVER_HOST,
         "--port", str(WLK_SERVER_PORT),
     ]

@@ -57,6 +57,7 @@ export VAD_MIN_SILENCE_MS
 export WLK_CHUNK
 export WLK_MODEL
 export WLK_LANG
+export WLK_POLICY
 
 # Parse arguments
 VERBOSE=false

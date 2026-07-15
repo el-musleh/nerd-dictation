@@ -21,6 +21,7 @@ VT=${VAD_THRESHOLD:-0.5}
 VS=${VAD_MIN_SILENCE_MS:-300}
 PUNCT=${PUNCTUATE:-off}
 WCHUNK=${WLK_CHUNK:-0.25}
+WPOL=${WLK_POLICY:-localagreement}
 
 # Build combobox lists with current value first (yad uses ! separator)
 ENGINE_LIST="$ENGINE!VOSK!WHISPER!WLK"
@@ -29,6 +30,7 @@ EMODEL_LIST="$EMODEL!small.en!base.en!tiny.en!medium.en"
 AMODEL_LIST="$AMODEL!small!base!medium"
 OFMT_LIST="$OFMT!srt!vtt!json!text"
 PUNCT_LIST="$PUNCT!off!on"
+WPOL_LIST="$WPOL!localagreement!simulstreaming"
 
 RESULTS=$(yad --title="STT Settings" --form --width=460 \
     --field="English Engine:CB"       "$ENGINE_LIST" \
@@ -41,6 +43,7 @@ RESULTS=$(yad --title="STT Settings" --form --width=460 \
     --field="Output Format:CB"        "$OFMT_LIST" \
     --field="Punctuate VOSK:CB"       "$PUNCT_LIST" \
     --field="WLK Chunk (s):NUM"       "$WCHUNK" \
+    --field="WLK Policy:CB"           "$WPOL_LIST" \
     --field="Apply on next dictation start:LBL" "" \
     --button="Save":0 --button="Cancel":1)
 EXIT=$?
@@ -56,6 +59,7 @@ if [ "$EXIT" -eq 0 ]; then
     OF=$(echo "$RESULTS" | cut -d'|' -f8)
     PC=$(echo "$RESULTS" | cut -d'|' -f9)
     WC=$(echo "$RESULTS" | cut -d'|' -f10 | grep -o '[0-9.]\+' | head -1); WC=${WC:-0.25}
+    WP=$(echo "$RESULTS" | cut -d'|' -f11)
 
     _set() {  # key newvalue -> replace or append in config.sh
         local k="$1" v="$2"
@@ -75,4 +79,5 @@ if [ "$EXIT" -eq 0 ]; then
     _set OUTPUT_FORMAT         "$OF"
     _set PUNCTUATE             "$PC"
     _set WLK_CHUNK             "$WC"
+    _set WLK_POLICY            "$WP"
 fi
