@@ -254,13 +254,30 @@ class AudioLevelSampler:
 # ---------------------------------------------------------------------------
 
 class TranscriptTailer:
-    """Tails the active log file and pushes new lines to a queue."""
+    """Tails the active log file and pushes ONLY new transcribed text to a queue.
+
+    Key design decisions:
+    - Resets file position to END-OF-FILE whenever a brand-new dictation
+      session starts (new PID) — prevents stale log content from showing up.
+    - For whisper-daemon logs: parses structured 'Transcribed: ...' lines only.
+    - For VOSK logs: picks up plain short text lines (no prefix).
+    """
+
+    # Regex matching whisper-daemon output: Transcribed: 'text here'
+    _WHISPER_RE = re.compile(r"Transcribed:\s*['\"](.+)['\"]\s*$")
+    # Lines that are clearly debug/error noise — skip them
+    _NOISE_PREFIXES = (
+        "WARNING", "ERROR", "INFO", "Loading", "Model",
+        "Transcribing", "WLK", "./dictate", "Started",
+        "nohup", "Whisper model", "Runtime", "No text",
+    )
 
     def __init__(self, text_queue):
         self._q = text_queue
         self._running = False
         self._thread = None
-        self._pos = {}
+        self._pos = {}          # path -> byte offset
+        self._last_pid = None   # detect new sessions
 
     def start(self):
         self._running = True
@@ -272,32 +289,70 @@ class TranscriptTailer:
 
     def _loop(self):
         while self._running:
-            state, lang, engine, _ = parse_dictate_state()
-            log_path = LOG_AR if lang == "Arabic" else LOG_EN
-            if state == "DICTATING" and os.path.exists(log_path):
-                self._tail(log_path)
+            state, lang, engine, pid = parse_dictate_state()
+            # Detect a brand-new session and reset position to EOF
+            if pid and pid != self._last_pid:
+                self._last_pid = pid
+                log_path = LOG_AR if lang == "Arabic" else LOG_EN
+                try:
+                    self._pos[log_path] = os.path.getsize(log_path)
+                except OSError:
+                    self._pos.pop(log_path, None)
+            if state == "DICTATING":
+                log_path = LOG_AR if lang == "Arabic" else LOG_EN
+                if os.path.exists(log_path):
+                    self._tail(log_path, engine=engine)
+            else:
+                self._last_pid = None
             time.sleep(0.3)
 
-    def _tail(self, path):
+    def _tail(self, path, engine=""):
         pos = self._pos.get(path, None)
         try:
             size = os.path.getsize(path)
             if pos is None or pos > size:
-                pos = max(0, size - 2000)
-            with open(path) as f:
+                # File was rotated or first read — start from current end
+                pos = size
+                self._pos[path] = pos
+                return
+            if pos == size:
+                return  # nothing new
+            with open(path, errors="replace") as f:
                 f.seek(pos)
                 new = f.read()
                 self._pos[path] = f.tell()
-            if new:
-                # Filter to transcript-like lines (short, non-debug lines)
-                for line in new.splitlines():
-                    if line and not line.startswith("[") and len(line) < 300:
-                        try:
-                            self._q.put_nowait(line)
-                        except queue.Full:
-                            pass
+            if not new:
+                return
+            for line in new.splitlines():
+                text = self._extract_transcript(line, engine)
+                if text:
+                    try:
+                        self._q.put_nowait(text)
+                    except queue.Full:
+                        pass
         except Exception:
             pass
+
+    def _extract_transcript(self, line, engine=""):
+        """Return clean transcript text from a log line, or '' to skip."""
+        line = line.strip()
+        if not line:
+            return ""
+        # Whisper-daemon structured output: 'Transcribed: "text"'
+        m = self._WHISPER_RE.search(line)
+        if m:
+            return m.group(1).strip()
+        # Skip known noise prefixes
+        for prefix in self._NOISE_PREFIXES:
+            if line.startswith(prefix):
+                return ""
+        # Skip lines with common log/path patterns
+        if any(c in line for c in ("[", "{", ":", "/", "http", "→", "—")):
+            return ""
+        # Accept short plain-text lines (likely VOSK partial output)
+        if len(line) < 200 and line[0].isalpha():
+            return line
+        return ""
 
 
 # ---------------------------------------------------------------------------

@@ -126,6 +126,14 @@ case "$CURRENT_LAYOUT" in
             USE_WHISPER=false
             MODEL_DIR="$MODEL_BASE/vosk-model-en-us-0.22"
             VOSK_GRAMMAR="$MODEL_BASE/grammar-en-tech.json"
+            # vosk-model-en-us-0.22 is a large Kaldi model — it does NOT support
+            # runtime grammar graphs. Only pass grammar for small/dynamic models.
+            # Detection: check for graph/HCLG.fst which signals grammar support.
+            if [ -f "$MODEL_DIR/graph/HCLG.fst" ]; then
+                MODEL_SUPPORTS_GRAMMAR=true
+            else
+                MODEL_SUPPORTS_GRAMMAR=false
+            fi
         fi
         ;;
     ara)
@@ -183,7 +191,8 @@ if [ "$USE_WLK" = "true" ]; then
         MODEL_DIR="$MODEL_BASE/vosk-model-en-us-0.22"
         VOSK_GRAMMAR="$MODEL_BASE/grammar-en-tech.json"
         VOSK_GRAMMAR_ARGS=()
-        if [ -n "$VOSK_GRAMMAR" ] && [ -f "$VOSK_GRAMMAR" ]; then
+        # vosk-model-en-us-0.22 doesn't support runtime grammar graphs — skip
+        if [ "${MODEL_SUPPORTS_GRAMMAR:-false}" = "true" ] && [ -n "$VOSK_GRAMMAR" ] && [ -f "$VOSK_GRAMMAR" ]; then
             VOSK_GRAMMAR_ARGS=(--vosk-grammar-file "$VOSK_GRAMMAR")
         fi
         if [ "${VAD_GATE:-off}" = "on" ] && command -v parec &>/dev/null; then
@@ -218,7 +227,7 @@ elif [ "$USE_WHISPER" = "true" ]; then
 else
     ENGINE="VOSK"
     VOSK_GRAMMAR_ARGS=()
-    if [ -n "$VOSK_GRAMMAR" ] && [ -f "$VOSK_GRAMMAR" ]; then
+    if [ "${MODEL_SUPPORTS_GRAMMAR:-false}" = "true" ] && [ -n "$VOSK_GRAMMAR" ] && [ -f "$VOSK_GRAMMAR" ]; then
         VOSK_GRAMMAR_ARGS=(--vosk-grammar-file "$VOSK_GRAMMAR")
     fi
     # Logs go to /tmp/nerd-dictation-en.log — check this file to debug English issues
