@@ -1104,12 +1104,9 @@ class PopupPanel(Gtk.Window):
             mark = buf.create_mark(None, buf.get_end_iter(), False)
             self._live_text.scroll_to_mark(mark, 0.0, True, 0.0, 1.0)
 
-            # Copy to clipboard if config targets Clipboard or Both
-            target = self._cfg.get("DICTATION_TARGET", "Typist (xdotool)")
-            if target in ["Clipboard", "Both"]:
-                joined_text = " ".join(new_text)
-                clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
-                clipboard.set_text(joined_text, -1)
+            # Note: clipboard copy of the full session is handled on stop via
+            # COPY_ON_STOP (_copy_session_on_stop); per-batch copying here caused
+            # fragmented/clipped clipboard contents.
 
         return True
 
@@ -1157,7 +1154,18 @@ class PopupPanel(Gtk.Window):
         # Snapshot session history when dictation ends
         if prev_state == "DICTATING" and state == "IDLE":
             GLib.idle_add(self._promote_last_partial)
+            GLib.idle_add(self._copy_session_on_stop)
             GLib.idle_add(self._snapshot_history)
+
+    def _copy_session_on_stop(self):
+        """Copy the full committed transcript to the clipboard (if enabled)."""
+        if self._cfg.get("COPY_ON_STOP", "off") != "on":
+            return
+        if not self._history_session:
+            return
+        text = "\n".join(self._history_session)
+        clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+        clipboard.set_text(text, -1)
 
     def _snapshot_history(self):
         if self._history_session:
