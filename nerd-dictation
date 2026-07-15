@@ -1648,6 +1648,8 @@ def main_begin(
     engine: str = "VOSK",
     whisper_model_name: str = "small",
     whisper_device: str = "cpu",
+    whisper_daemon_mode: str = "warm-cache",
+    whisper_socket: str = "",
     language: str = "",
 ) -> None:
     """
