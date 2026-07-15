@@ -87,6 +87,23 @@ def transcribe(model_name, language, compute_type, audio_bytes):
             _export(out_text, seg_records, fmt, export_path)
         except Exception as ex:  # noqa: BLE001
             sys.stderr.write(f"[whisper-daemon] export failed: {ex}\n")
+        # E5: continuous autosave (append each finalized utterance).
+        autosave = os.environ.get("AUTOSAVE_PATH")
+        if autosave and out_text:
+            try:
+                with open(autosave, "a", encoding="utf-8") as fh:
+                    fh.write(out_text + "\n")
+            except Exception as ex:  # noqa: BLE001
+                sys.stderr.write(f"[whisper-daemon] autosave failed: {ex}\n")
+        # E4: remember last utterance for "Undo Last".
+        last_file = os.environ.get("LAST_UTTERANCE_FILE")
+        if last_file and out_text:
+            try:
+                os.makedirs(os.path.dirname(last_file), exist_ok=True)
+                with open(last_file, "w", encoding="utf-8") as fh:
+                    fh.write(out_text)
+            except Exception:
+                pass
     return text
 
 

@@ -140,7 +140,9 @@ class VoiceController:
         if state != self._state:
             self._state = state
             self._apply_state(state, lang, engine)
-            self._popup.update_state(state, lang, engine)
+
+        # Always update UI state components (safe to call repeatedly in GTK)
+        self._popup.update_state(state, lang, engine)
 
     def _apply_state(self, state, lang="", engine=""):
         self._icon.icon = icon_for(state)

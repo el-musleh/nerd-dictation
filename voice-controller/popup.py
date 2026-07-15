@@ -603,7 +603,7 @@ class PopupPanel(Gtk.Window):
         self._build_ui()
         self.connect("button-press-event", self._on_button_press)
         self.connect("motion-notify-event", self._on_motion_notify)
-        self.connect("delete-event", lambda w, e: self.hide_on_delete() or True)
+        self.connect("delete-event", lambda w, e: self.hide_on_delete())
         GLib.timeout_add(150, self._poll_queues)
 
         # Start Gtk main loop on a daemon thread

@@ -56,6 +56,9 @@ export PUNCTUATE
 export COMPUTE_TYPE
 # Per-language Whisper model map.
 export LANG_MODELS
+# Transcript autosave + undo-last tracking.
+export AUTOSAVE_PATH
+export LAST_UTTERANCE_FILE
 # VAD tuning for the VOSK (VAD_GATE) path.
 export VAD_THRESHOLD
 export VAD_MIN_SILENCE_MS

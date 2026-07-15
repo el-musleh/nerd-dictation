@@ -11,7 +11,7 @@ def build_menu_items(c, handlers):
     """Build the (static) STT-only menu item set.
 
     `c` exposes `.mode` (always 'STT' here, kept for call-site stability).
-    `handlers` maps: on_stt_start, on_stt_stop.
+    `handlers` maps: on_stt_start, on_stt_stop, on_stt_settings.
     """
     items = {
         'Show Settings': pystray.MenuItem(
@@ -20,6 +20,9 @@ def build_menu_items(c, handlers):
             'Start Dictation (Super+H)', handlers['on_stt_start']),
         'Stop Dictation': pystray.MenuItem(
             'Stop Dictation (Shift+Super+H)', handlers['on_stt_stop']),
+        'Undo Last': pystray.MenuItem(
+            'Undo Last Utterance',
+            lambda *_: run_script(os.path.join(STT_DIR, 'undo_last.py'))),
     }
     return items
 
@@ -31,6 +34,7 @@ def build_menu(c, handlers, on_quit):
         pystray.Menu.SEPARATOR,
         items['Start Dictation'],
         items['Stop Dictation'],
+        items['Undo Last'],
         pystray.Menu.SEPARATOR,
         pystray.MenuItem('Quit', on_quit),
     )
