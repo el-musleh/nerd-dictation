@@ -17,7 +17,8 @@ AMODEL=${ARABIC_WHISPER_MODEL:-small}
 
 OFMT=${OUTPUT_FORMAT:-srt}
 
-PUNCT=${PUNCTUATE:-off}
+VT=${VAD_THRESHOLD:-0.5}
+VS=${VAD_MIN_SILENCE_MS:-300}
 
 # Build combobox lists with current value first (yad uses ! separator)
 ENGINE_LIST="$ENGINE!VOSK!WHISPER!WLK"
@@ -27,9 +28,11 @@ AMODEL_LIST="$AMODEL!small!base!medium"
 OFMT_LIST="$OFMT!srt!vtt!json!text"
 PUNCT_LIST="$PUNCT!off!on"
 
-RESULTS=$(yad --title="STT Settings" --form --width=420 \
+RESULTS=$(yad --title="STT Settings" --form --width=460 \
     --field="English Engine:CB"       "$ENGINE_LIST" \
     --field="VOSK Silence Timeout (s):NUM" "$VTIMEOUT" \
+    --field="VAD Threshold (0-1):NUM" "$VT" \
+    --field="VAD Min Silence (ms):NUM" "$VS" \
     --field="Whisper Mode:CB"         "$WMODE_LIST" \
     --field="English Whisper Model:CB" "$EMODEL_LIST" \
     --field="Arabic Whisper Model:CB"  "$AMODEL_LIST" \
@@ -42,11 +45,13 @@ EXIT=$?
 if [ "$EXIT" -eq 0 ]; then
     E=$(echo  "$RESULTS" | cut -d'|' -f1)
     V=$(echo  "$RESULTS" | cut -d'|' -f2 | grep -o '[0-9]\+' | head -1); V=${V:-12}
-    W=$(echo  "$RESULTS" | cut -d'|' -f3)
-    EM=$(echo "$RESULTS" | cut -d'|' -f4)
-    AM=$(echo "$RESULTS" | cut -d'|' -f5)
-    OF=$(echo "$RESULTS" | cut -d'|' -f6)
-    PC=$(echo "$RESULTS" | cut -d'|' -f7)
+    VT=$(echo  "$RESULTS" | cut -d'|' -f3 | grep -o '[0-9.]\+' | head -1); VT=${VT:-0.5}
+    VS=$(echo  "$RESULTS" | cut -d'|' -f4 | grep -o '[0-9]\+' | head -1); VS=${VS:-300}
+    W=$(echo  "$RESULTS" | cut -d'|' -f5)
+    EM=$(echo "$RESULTS" | cut -d'|' -f6)
+    AM=$(echo "$RESULTS" | cut -d'|' -f7)
+    OF=$(echo "$RESULTS" | cut -d'|' -f8)
+    PC=$(echo "$RESULTS" | cut -d'|' -f9)
 
     _set() {  # key newvalue -> replace or append in config.sh
         local k="$1" v="$2"
@@ -58,6 +63,8 @@ if [ "$EXIT" -eq 0 ]; then
     }
     _set ENGLISH_ENGINE        "$E"
     _set VOSK_TIMEOUT          "$V"
+    _set VAD_THRESHOLD         "$VT"
+    _set VAD_MIN_SILENCE_MS    "$VS"
     _set WHISPER_DAEMON_MODE   "$W"
     _set ENGLISH_WHISPER_MODEL "$EM"
     _set ARABIC_WHISPER_MODEL  "$AM"

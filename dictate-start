@@ -50,6 +50,9 @@ esac
 export WHISPER_EXPORT_PATH
 export OUTPUT_FORMAT
 export PUNCTUATE
+# VAD tuning for the VOSK (VAD_GATE) path.
+export VAD_THRESHOLD
+export VAD_MIN_SILENCE_MS
 
 # Parse arguments
 VERBOSE=false

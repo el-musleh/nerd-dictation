@@ -54,6 +54,24 @@ def test_vad_roundtrip_format():
     sr = vad_gate.SAMPLE_RATE
     sig = (0.5 * np.sin(2 * np.pi * 300 * np.arange(sr) / sr)).astype(np.float32)
     out = vad_gate.vad_filter_pcm(_pcm_bytes(sig), model)
-    # Output remains valid s16le (even byte count, non-empty for clear speech).
     assert len(out) % 2 == 0
     assert len(out) > 0
+
+
+def test_vad_threshold_env_override(monkeypatch):
+    vad_gate, model = _load_gate()
+    # Very high threshold -> almost everything dropped as non-speech.
+    monkeypatch.setenv("VAD_THRESHOLD", "0.99")
+    reload_module = _reload(vad_gate)
+    sr = reload_module.SAMPLE_RATE
+    sig = (0.5 * np.sin(2 * np.pi * 300 * np.arange(sr) / sr)).astype(np.float32)
+    out = reload_module.vad_filter_pcm(_pcm_bytes(sig), model,
+                                       threshold=0.99)
+    # High threshold on a pure tone -> little retained.
+    assert len(out) < len(_pcm_bytes(sig)) * 0.5
+
+
+def _reload(module):
+    import importlib
+    return importlib.reload(module)
+
