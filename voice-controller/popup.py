@@ -196,8 +196,14 @@ def read_config():
     WANTED = {
         "ENGLISH_ENGINE", "VOSK_TIMEOUT", "WHISPER_DAEMON_MODE",
         "ENGLISH_WHISPER_MODEL", "ARABIC_WHISPER_MODEL",
-        "WLK_MODEL", "WLK_LANG", "VAD_GATE", "WHISPER_DEVICE", "AUDIO_DEVICE",
-        "PUNCTUATE", "WLK_POLICY", "AUTO_LANG"
+        "WLK_MODEL", "WLK_LANG", "WLK_POLICY", "WLK_CHUNK",
+        "VAD_GATE", "VAD_THRESHOLD", "VAD_MIN_SILENCE_MS",
+        "PUNCTUATE", "AUTO_LANG", "COMPUTE_TYPE", "LANG_MODELS",
+        "AUDIO_DEVICE", "DICTATION_TARGET", "OUTPUT_FORMAT",
+        "WHISPER_EXPORT_PATH", "AUTOSAVE_PATH",
+        "COPY_ON_STOP", "PANEL_IN_TASKBAR", "PANEL_REMEMBER",
+        "PANEL_VISIBLE", "PANEL_X", "PANEL_Y", "PANEL_W", "PANEL_H",
+        "AUTO_SHOW_ON_VOSK", "WLK_READY_TIMEOUT",
     }
     print_cmds = "; ".join(f'echo {k}="${{{k}}}"' for k in sorted(WANTED))
     script = f"source {CONFIG_FILE}; {print_cmds}"
