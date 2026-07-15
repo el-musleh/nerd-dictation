@@ -137,11 +137,12 @@ else
     if [ -n "$VOSK_GRAMMAR" ] && [ -f "$VOSK_GRAMMAR" ]; then
         VOSK_GRAMMAR_ARGS=(--vosk-grammar-file "$VOSK_GRAMMAR")
     fi
+    # Logs go to /tmp/nerd-dictation-en.log — check this file to debug English issues
     "$NERD_DICTATION" begin \
         --vosk-model-dir="$MODEL_DIR" \
         --input "$INPUT_METHOD" \
-        --timeout=$TIMEOUT \
-        "${VOSK_GRAMMAR_ARGS[@]}" &
+        --timeout=$VOSK_TIMEOUT \
+        "${VOSK_GRAMMAR_ARGS[@]}" --verbose 1 >> /tmp/nerd-dictation-en.log 2>&1 &
 fi
 PID=$!
 
