@@ -17,10 +17,19 @@ nerd-dictation/
 ├── voice-controller/       # pystray tray (STT-only): Start/Stop/Show Settings
 ├── xkblayout-state/        # source of the xkblayout-state keyboard-layout binary
 │                            # (binary installed to /usr/local/bin/xkblayout-state)
-└── model/                  # VOSK model + grammar
+├── docs/auto-switch-reference/  # archived docs from the old auto-switch project
+│                            # (its EN/AR logic is now inline in dictate-start)
+└── model/                  # VOSK model + grammar (gitignored)
 ```
 
-## Runtime config
+## History / consolidation
+
+This repo now also contains the `voice-controller` tray and the
+`xkblayout-state` source (moved in from sibling folders) so the whole STT
+workspace is one clone. The old `nerd-dictation-auto-switch-languages` project
+was **deleted** — its language-switching logic was already absorbed into
+`dictate-start`; its documentation is kept under
+`docs/auto-switch-reference/` for reference.
 
 `~/.config/nerd-dictation/config.sh` — engine switches:
 `ENGLISH_ENGINE` (VOSK|WHISPER), `VOSK_TIMEOUT`, `WHISPER_DAEMON_MODE`
