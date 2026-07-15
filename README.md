@@ -52,8 +52,10 @@ Edit it via the tray **Show Settings** button, or directly.
 
 - `whisper_streaming/` — reference only. Original 2023 LocalAgreement research
   repo; its own README marks it outdated. WhisperLiveKit is its successor.
-- `WhisperS2T-transcriber/` — batch/file GUI transcriber. Not real-time; keep
-  as a standalone bulk-transcription tool, not wired into live dictation.
+- `WhisperS2T-transcriber/` — batch/file GUI transcriber. **Windows-only**: its
+  `install.py` hardcodes `win_amd64` torch wheels, so it fails to install on
+  Linux. Keep as a Windows bulk-transcription tool; not usable here, not wired
+  into live dictation.
 
 ## Run
 
