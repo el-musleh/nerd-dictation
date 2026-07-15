@@ -48,6 +48,15 @@ def transcribe(model_name, language, compute_type, audio_bytes):
         language=language if language else None,
         beam_size=5,
         vad_filter=True,
+        vad_parameters=dict(
+            threshold=0.5,               # speech-probability threshold (raise to be stricter)
+            min_speech_duration_ms=250,  # ignore blips shorter than this
+            max_speech_duration_s=30,
+            min_silence_duration_ms=700,  # require this much silence to end a segment
+            speech_pad_ms=200,           # pad edges so words aren't clipped
+            window_size_samples=512,
+        ),
+        condition_on_previous_text=False,  # avoid hallucination drift across turns
     )
     return " ".join(seg.text.strip() for seg in segments).strip()
 
