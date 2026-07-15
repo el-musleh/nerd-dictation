@@ -21,18 +21,14 @@ def _load_gate():
 def test_vad_drops_silence():
     vad_gate, model = _load_gate()
     sr = vad_gate.SAMPLE_RATE
-    # 2 seconds of pure silence (zeros)
     silence = np.zeros(sr * 2, dtype=np.float32)
     out = vad_gate.vad_filter_pcm(_pcm_bytes(silence), model)
-    # Almost all silence should be dropped.
     assert len(out) < len(_pcm_bytes(silence)) * 0.2, "silence not dropped"
 
 
 def test_vad_keeps_speech():
     vad_gate, model = _load_gate()
-    # Real synthesized speech fixture, resampled to 16 kHz mono to match the
-    # gate's expected rate (parec feeds 16 kHz in production).
-    import subprocess, tempfile, wave
+    import subprocess, tempfile
     wav_path = os.path.join(REPO, "tests", "fixtures", "sample-en.wav")
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
         tmp16 = tf.name
@@ -60,14 +56,11 @@ def test_vad_roundtrip_format():
 
 def test_vad_threshold_env_override(monkeypatch):
     vad_gate, model = _load_gate()
-    # Very high threshold -> almost everything dropped as non-speech.
     monkeypatch.setenv("VAD_THRESHOLD", "0.99")
     reload_module = _reload(vad_gate)
     sr = reload_module.SAMPLE_RATE
     sig = (0.5 * np.sin(2 * np.pi * 300 * np.arange(sr) / sr)).astype(np.float32)
-    out = reload_module.vad_filter_pcm(_pcm_bytes(sig), model,
-                                       threshold=0.99)
-    # High threshold on a pure tone -> little retained.
+    out = reload_module.vad_filter_pcm(_pcm_bytes(sig), model, threshold=0.99)
     assert len(out) < len(_pcm_bytes(sig)) * 0.5
 
 
@@ -75,3 +68,29 @@ def _reload(module):
     import importlib
     return importlib.reload(module)
 
+
+class _EnergyVAD:
+    """Deterministic VAD: any non-zero (energy) window is speech."""
+
+    def __call__(self, window, sr):
+        import torch
+        val = 1.0 if float(window.abs().max()) > 0.0 else 0.0
+        return torch.tensor(val)
+
+
+def test_vad_pads_both_edges():
+    import vad_gate
+    FRAME = vad_gate.FRAME_SAMPLES
+    PAD = vad_gate.PAD_SAMPLES
+    n_frames = 40
+    audio = np.zeros(FRAME * n_frames, dtype=np.float32)
+    # A single speech blip only in frame 10; everything else is silence.
+    start = 10 * FRAME
+    audio[start:start + FRAME] = 0.8
+    out = vad_gate.vad_filter_pcm(_pcm_bytes(audio), _EnergyVAD())
+    out_n = len(out) // 2
+    assert out_n >= FRAME, "speech frame dropped"
+    # Lead-in: should start before frame 10.
+    assert out_n >= FRAME + PAD, "missing leading pad"
+    # Trailing: should extend past frame 11 (PAD samples after speech end).
+    assert out_n >= (11 * FRAME) + PAD, "missing trailing pad after speech end"

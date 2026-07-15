@@ -44,14 +44,19 @@ def vad_filter_pcm(pcm: bytes, model, threshold: float = THRESHOLD,
 
     `min_silence_ms` adds a hangover: once speech ends, keep a little tail so
     word endings aren't clipped (mirrors WhisperLiveKit's min_silence_duration).
+    Speech runs are padded on BOTH edges by `pad_samples` (lead-in before the
+    run starts, and a trailing tail after the run ends) so word onsets/endings
+    inside a longer utterance are not clipped.
     """
     import torch
     audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
     n = len(audio)
     hangover_frames = max(1, int((min_silence_ms / 1000.0) * SAMPLE_RATE / FRAME_SAMPLES))
+    pad_frames = max(1, int(pad_samples / FRAME_SAMPLES))
     out = []
-    speaking = False
+    in_run = False
     hangover = 0
+    tail = 0  # remaining trailing-pad frames after a run fully ends
     i = 0
     while i + FRAME_SAMPLES <= n:
         window = audio[i:i + FRAME_SAMPLES]
@@ -59,20 +64,27 @@ def vad_filter_pcm(pcm: bytes, model, threshold: float = THRESHOLD,
             prob = float(model(torch.from_numpy(window), SAMPLE_RATE).item())
         is_speech = prob >= threshold
         if is_speech:
-            start = max(i - pad_samples, 0)
-            if start < i and not speaking:
-                out.append(audio[start:i])
+            if not in_run:
+                # Lead-in pad from the preceding silence.
+                start = max(i - pad_samples, 0)
+                if start < i:
+                    out.append(audio[start:i])
+                in_run = True
+                hangover = hangover_frames
+                tail = pad_frames
             out.append(window)
-            speaking = True
-            hangover = hangover_frames
         else:
-            if speaking:
-                # Keep a tail (hangover) after speech ends before cutting.
+            if in_run:
+                # Hangover keeps a little tail during the run's end.
                 out.append(window)
                 hangover -= 1
                 if hangover <= 0:
-                    speaking = False
-            # else: pure silence -> dropped
+                    in_run = False
+            elif tail > 0:
+                # Trailing pad: silence just after the run ends.
+                out.append(window)
+                tail -= 1
+            # else: pure pre-speech silence -> dropped
         i += FRAME_SAMPLES
     if i < n:
         out.append(audio[i:])
@@ -101,6 +113,7 @@ def main():
     history = deque(maxlen=pad_frames)
     speaking = False
     hangover_counter = 0
+    tail_pad = 0  # trailing silence frames to emit after a run ends
 
     try:
         while True:
@@ -110,7 +123,7 @@ def main():
 
             if len(chunk) < chunk_size:
                 # Final partial chunk
-                if speaking or hangover_counter > 0:
+                if speaking or hangover_counter > 0 or tail_pad > 0:
                     sys.stdout.buffer.write(chunk)
                     sys.stdout.buffer.flush()
                 break
@@ -130,6 +143,7 @@ def main():
                 sys.stdout.buffer.write(chunk)
                 sys.stdout.buffer.flush()
                 hangover_counter = hangover_frames
+                tail_pad = pad_frames
             else:
                 if speaking:
                     sys.stdout.buffer.write(chunk)
@@ -137,6 +151,11 @@ def main():
                     hangover_counter -= 1
                     if hangover_counter <= 0:
                         speaking = False
+                elif tail_pad > 0:
+                    # Trailing pad: keep a little silence after the run ends.
+                    sys.stdout.buffer.write(chunk)
+                    sys.stdout.buffer.flush()
+                    tail_pad -= 1
                 else:
                     history.append(chunk)
     except (BrokenPipeError, ConnectionResetError, KeyboardInterrupt):
