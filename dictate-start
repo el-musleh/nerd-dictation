@@ -17,6 +17,23 @@ if [ -f "$MODEL_BASE/config.sh" ]; then
     source "$MODEL_BASE/config.sh"
 fi
 
+# Validate ENGLISH_ENGINE against the canonical backend registry (fail fast on typos).
+if ! python3 "$SCRIPT_DIR/backends.py" validate "$ENGLISH_ENGINE" >/dev/null 2>&1; then
+    zenity --error --title="Dictation Error" \
+        --text="Unknown ENGLISH_ENGINE: $ENGLISH_ENGINE\n\nValid engines: VOSK, WHISPER, WLK"
+    notify-send "Dictation Failed" "Unknown ENGLISH_ENGINE: $ENGLISH_ENGINE" \
+        --icon=dialog-error --app-name="nerd-dictation" 2>/dev/null
+    exit 1
+fi
+
+# Validate WHISPER_DAEMON_MODE
+case "$WHISPER_DAEMON_MODE" in
+    warm-cache|ipc) ;;
+    *) zenity --error --title="Dictation Error" \
+        --text="Unknown WHISPER_DAEMON_MODE: $WHISPER_DAEMON_MODE\n\nValid: warm-cache, ipc"
+       exit 1 ;;
+esac
+
 # Parse arguments
 VERBOSE=false
 if [ "$1" = "--verbose" ] || [ "$1" = "-v" ]; then
