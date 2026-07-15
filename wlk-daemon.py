@@ -26,7 +26,6 @@ import json
 import os
 import signal
 import subprocess
-import sys
 
 WLK_VENV_PYTHON = "/home/steve/dev/stt/WhisperLiveKit/.venv/bin/python"
 WLK_SERVER_HOST = os.environ.get("WLK_HOST", "127.0.0.1")
@@ -74,7 +73,7 @@ async def wait_for_server(timeout: float = 60.0) -> None:
     last_err = None
     while asyncio.get_event_loop().time() < deadline:
         try:
-            async with websockets.connect(url) as ws:
+            async with websockets.connect(url) as _:
                 return  # server up (we close immediately; real client reconnects)
         except Exception as e:  # noqa: BLE001
             last_err = e
@@ -93,10 +92,6 @@ def type_delta(new_full: str, state) -> None:
     else:
         # Committed text changed non-monotonically (rare); type the new tail
         # after the longest common prefix.
-        import difflib
-        sm = difflib.SequenceMatcher(None, prev, new_full)
-        _, _, _, _ = sm.find_longest_match(0, len(prev), 0, len(new_full))
-        # Fallback: type everything after the common prefix length.
         common = 0
         for a, b in zip(prev, new_full):
             if a == b:
@@ -195,7 +190,7 @@ async def run(model: str, language: str) -> None:
                         lines = msg.get("lines", [])
                         buf = msg.get("buffer_transcription", "")
                         full = " ".join(
-                            l.get("text", "") for l in lines if l.get("text")
+                            line.get("text", "") for line in lines if line.get("text")
                         ).strip()
                         if not full and buf:
                             full = buf.strip()

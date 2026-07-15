@@ -26,7 +26,7 @@ DEVICE = os.environ.get("WHISPER_WARM_DEVICE", "cpu")
 COMPUTE = os.environ.get("COMPUTE_TYPE", "float16" if DEVICE == "cuda" else "int8")
 
 # Model cache keyed by (model, compute_type)
-_MODELS = {}
+_MODELS: dict[tuple[str, str], object] = {}
 _MODELS_LOCK = threading.Lock()
 
 

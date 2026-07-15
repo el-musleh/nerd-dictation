@@ -14,6 +14,7 @@ Designed to be a drop-in capture filter: same byte format on both ends.
 import argparse
 import os
 import sys
+from collections import deque
 
 import numpy as np
 
@@ -88,11 +89,61 @@ def main():
     ap.add_argument("--sample-rate", type=int, default=SAMPLE_RATE)
     args = ap.parse_args()
 
+    import torch
     model = load_vad()
-    data = sys.stdin.buffer.read()
-    out = vad_filter_pcm(data, model, threshold=args.threshold,
-                         min_silence_ms=args.min_silence_ms)
-    sys.stdout.buffer.write(out)
+
+    # 16kHz mono 16-bit PCM has 2 bytes per sample.
+    # We read in FRAME_SAMPLES (512 samples = 1024 bytes = 32ms) chunk sizes.
+    chunk_size = FRAME_SAMPLES * 2
+    hangover_frames = max(1, int((args.min_silence_ms / 1000.0) * args.sample_rate / FRAME_SAMPLES))
+    pad_frames = max(1, int(PAD_SAMPLES / FRAME_SAMPLES))
+
+    history = deque(maxlen=pad_frames)
+    speaking = False
+    hangover_counter = 0
+
+    try:
+        while True:
+            chunk = sys.stdin.buffer.read(chunk_size)
+            if not chunk:
+                break
+
+            if len(chunk) < chunk_size:
+                # Final partial chunk
+                if speaking or hangover_counter > 0:
+                    sys.stdout.buffer.write(chunk)
+                    sys.stdout.buffer.flush()
+                break
+
+            # Convert buffer to float32 tensor scaled to [-1.0, 1.0] for Silero
+            audio = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
+            with torch.no_grad():
+                prob = float(model(torch.from_numpy(audio), args.sample_rate).item())
+
+            is_speech = prob >= args.threshold
+            if is_speech:
+                if not speaking:
+                    speaking = True
+                    # Output pre-speech padding
+                    while history:
+                        sys.stdout.buffer.write(history.popleft())
+                sys.stdout.buffer.write(chunk)
+                sys.stdout.buffer.flush()
+                hangover_counter = hangover_frames
+            else:
+                if speaking:
+                    sys.stdout.buffer.write(chunk)
+                    sys.stdout.buffer.flush()
+                    hangover_counter -= 1
+                    if hangover_counter <= 0:
+                        speaking = False
+                else:
+                    history.append(chunk)
+    except (BrokenPipeError, ConnectionResetError, KeyboardInterrupt):
+        pass
+    except Exception as e:
+        sys.stderr.write(f"VAD Gate Error: {e}\n")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -196,7 +196,8 @@ def read_config():
     WANTED = {
         "ENGLISH_ENGINE", "VOSK_TIMEOUT", "WHISPER_DAEMON_MODE",
         "ENGLISH_WHISPER_MODEL", "ARABIC_WHISPER_MODEL",
-        "WLK_MODEL", "WLK_LANG", "VAD_GATE", "WHISPER_DEVICE", "AUDIO_DEVICE"
+        "WLK_MODEL", "WLK_LANG", "VAD_GATE", "WHISPER_DEVICE", "AUDIO_DEVICE",
+        "PUNCTUATE", "WLK_POLICY", "AUTO_LANG"
     }
     print_cmds = "; ".join(f'echo {k}="${{{k}}}"' for k in sorted(WANTED))
     script = f"source {CONFIG_FILE}; {print_cmds}"
@@ -701,27 +702,21 @@ class PopupPanel(Gtk.Window):
         lbl_eng_title = Gtk.Label(label="⚙  Engine Switcher")
         lbl_eng_title.set_alignment(0.0, 0.5)
         eng_box.pack_start(lbl_eng_title, False, False, 4)
-
         # Switch Buttons
         btn_switch_grid = Gtk.Grid()
         btn_switch_grid.set_column_spacing(8)
         
         self._eng_btns = {}
-        col_map = {"VOSK": "vosk", "WHISPER": "whisper", "WLK": "wlk"}
-        for idx, (eng, tip, col) in enumerate(EnginePanel_mock.ENGINES):
-            b = Gtk.Button(label=eng)
-            b.get_style_context().add_class("btn-settings")
-            if eng == self._cfg.get("ENGLISH_ENGINE", "VOSK"):
-                b.get_style_context().add_class(col_map[eng])
-            b.connect("clicked", self._select_engine, eng)
-            btn_switch_grid.attach(b, idx, 0, 1, 1)
-            self._eng_btns[eng] = b
-        eng_box.pack_start(btn_switch_grid, False, False, 6)
+        # Scrollable form container for settings
+        scroll_win = Gtk.ScrolledWindow()
+        scroll_win.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll_win.set_min_content_height(350)
+        scroll_win.set_shadow_type(Gtk.ShadowType.NONE)
 
-        # Form fields
         form = Gtk.Grid()
         form.set_row_spacing(8)
         form.set_column_spacing(12)
+        form.set_margin_end(8) # spacing for scrollbar
 
         # EN Model
         lbl_en = Gtk.Label(label="EN model:")
@@ -795,11 +790,68 @@ class PopupPanel(Gtk.Window):
         self._target_cb.connect("changed", lambda cb: self._save_config())
         form.attach(self._target_cb, 1, 4, 1, 1)
 
+        # Whisper Daemon Mode Dropdown
+        lbl_daemon = Gtk.Label(label="Whisper Mode:")
+        lbl_daemon.set_alignment(0.0, 0.5)
+        form.attach(lbl_daemon, 0, 5, 1, 1)
+        self._daemon_cb = Gtk.ComboBoxText()
+        self._daemon_cb.append_text("warm-cache")
+        self._daemon_cb.append_text("ipc")
+        curr_daemon = self._cfg.get("WHISPER_DAEMON_MODE", "warm-cache")
+        if curr_daemon in ["warm-cache", "ipc"]:
+            self._daemon_cb.set_active(["warm-cache", "ipc"].index(curr_daemon))
+        else:
+            self._daemon_cb.set_active(0)
+        self._daemon_cb.connect("changed", lambda cb: self._save_config())
+        form.attach(self._daemon_cb, 1, 5, 1, 1)
+
+        # WLK Model Dropdown
+        lbl_wlk_model = Gtk.Label(label="WLK Model:")
+        lbl_wlk_model.set_alignment(0.0, 0.5)
+        form.attach(lbl_wlk_model, 0, 6, 1, 1)
+        self._wlk_model_cb = Gtk.ComboBoxText()
+        wlk_models = ["tiny", "base", "small", "medium", "large-v2"]
+        for wm in wlk_models:
+            self._wlk_model_cb.append_text(wm)
+        curr_wlk_model = self._cfg.get("WLK_MODEL", "small")
+        if curr_wlk_model in wlk_models:
+            self._wlk_model_cb.set_active(wlk_models.index(curr_wlk_model))
+        else:
+            self._wlk_model_cb.set_active(2) # small
+        self._wlk_model_cb.connect("changed", lambda cb: self._save_config())
+        form.attach(self._wlk_model_cb, 1, 6, 1, 1)
+
+        # WLK Policy Dropdown
+        lbl_wlk_policy = Gtk.Label(label="WLK Policy:")
+        lbl_wlk_policy.set_alignment(0.0, 0.5)
+        form.attach(lbl_wlk_policy, 0, 7, 1, 1)
+        self._wlk_policy_cb = Gtk.ComboBoxText()
+        self._wlk_policy_cb.append_text("localagreement")
+        self._wlk_policy_cb.append_text("simulstreaming")
+        curr_wlk_policy = self._cfg.get("WLK_POLICY", "localagreement")
+        if curr_wlk_policy in ["localagreement", "simulstreaming"]:
+            self._wlk_policy_cb.set_active(["localagreement", "simulstreaming"].index(curr_wlk_policy))
+        else:
+            self._wlk_policy_cb.set_active(0)
+        self._wlk_policy_cb.connect("changed", lambda cb: self._save_config())
+        form.attach(self._wlk_policy_cb, 1, 7, 1, 1)
+
+        # Punctuation checkbutton
+        self._punct_cb = Gtk.CheckButton(label="Auto Punctuate / Restore Caps")
+        self._punct_cb.set_active(self._cfg.get("PUNCTUATE", "off") == "on")
+        self._punct_cb.connect("toggled", lambda cb: self._save_config())
+        form.attach(self._punct_cb, 0, 8, 2, 1)
+
+        # WLK Auto Language checkbutton
+        self._auto_lang_cb = Gtk.CheckButton(label="WLK Auto-Detect Language")
+        self._auto_lang_cb.set_active(self._cfg.get("AUTO_LANG", "off") == "on")
+        self._auto_lang_cb.connect("toggled", lambda cb: self._save_config())
+        form.attach(self._auto_lang_cb, 0, 9, 2, 1)
+
         # VAD checkbox
         self._vad_cb = Gtk.CheckButton(label="VAD Gate (Silero)")
         self._vad_cb.set_active(self._cfg.get("VAD_GATE", "off") == "on")
         self._vad_cb.connect("toggled", lambda cb: self._save_config())
-        form.attach(self._vad_cb, 0, 5, 2, 1)
 
         eng_box.pack_start(form, False, False, 4)
 

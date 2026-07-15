@@ -15,6 +15,7 @@ Usage:
 """
 import argparse
 import sys
+from typing import Any
 
 
 def get_model(lang: str):
@@ -27,7 +28,7 @@ def get_model(lang: str):
     return PunctCapSegModelONNX.from_pretrained(model_name)
 
 
-_CACHE = {}
+_CACHE: dict[str, Any] = {}
 
 
 def punctuate(text: str, lang: str = "en") -> str:

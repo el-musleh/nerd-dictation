@@ -69,6 +69,10 @@ fi
 
 # Clean up any stragglers
 pkill -f "nerd-dictation begin" 2>/dev/null
+pkill -f "vad_gate.py" 2>/dev/null
+pkill -f "parec --record" 2>/dev/null
+pkill -f "pw-cat --record" 2>/dev/null
+pkill -f "sox -q" 2>/dev/null
 
 # Clean up state file
 rm -f "$STATE_FILE"
