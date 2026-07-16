@@ -1126,6 +1126,16 @@ class PopupPanel(Gtk.Window):
         self._settings_status = Gtk.Label(label="Changes save instantly · take effect next dictation")
         self._settings_status.get_style_context().add_class("text-muted")
         box.pack_start(self._settings_status, False, False, 4)
+
+        # Apply & Restart: stop then start dictation so engine/model changes
+        # take effect immediately (no manual toggle needed).
+        apply_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        btn_apply = Gtk.Button(label="⟳  Apply & Restart")
+        btn_apply.get_style_context().add_class("btn-start")
+        btn_apply.connect("clicked", lambda w: self._apply_restart())
+        apply_row.pack_end(btn_apply, False, False, 4)
+        box.pack_start(apply_row, False, False, 4)
+
         self._nb.append_page(box, Gtk.Label(label="  Settings  "))
 
     def _do_start(self):
@@ -1135,6 +1145,15 @@ class PopupPanel(Gtk.Window):
     def _do_stop(self):
         if self._on_stop:
             self._on_stop()
+
+    def _apply_restart(self):
+        """Stop then start dictation so config edits take effect now."""
+        try:
+            run_script(DICTATE_STOP)
+            # Give the stop a moment to tear down before restarting.
+            GLib.timeout_add_seconds(1, lambda: run_script(DICTATE_START) or False)
+        except Exception as ex:  # noqa: BLE001
+            sys.stderr.write(f"[popup] apply_restart error: {ex}\n")
 
     def _select_engine(self, button, engine_name):
         self._cfg["ENGLISH_ENGINE"] = engine_name
