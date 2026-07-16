@@ -1266,10 +1266,30 @@ class PopupPanel(Gtk.Window):
             row.get_style_context().add_class("card-row")
             lbl_name = Gtk.Label(label=f"  📁 {name}")
             row.pack_start(lbl_name, False, False, 4)
+            # Mark the active model(s) so the user knows which is loaded.
+            active = self._active_model_names()
+            if name in active:
+                badge = Gtk.Label(label="● active")
+                badge.get_style_context().add_class("badge-engine")
+                row.pack_start(badge, False, False, 4)
             lbl_size = Gtk.Label(label=f"{size} MB")
             row.pack_end(lbl_size, False, False, 4)
             self._models_flow.pack_start(row, False, False, 2)
         self._models_flow.show_all()
+
+    def _active_model_names(self):
+        """Names of models currently selected in config (for the badge)."""
+        names = set()
+        for key in ("ENGLISH_WHISPER_MODEL", "ARABIC_WHISPER_MODEL", "WLK_MODEL"):
+            v = self._cfg.get(key)
+            if v:
+                names.add(v)
+        # resolve_lang_model style "en:small.en" entries also count
+        langs = self._cfg.get("LANG_MODELS", "")
+        for part in str(langs).split(","):
+            if ":" in part:
+                names.add(part.split(":", 1)[1].strip())
+        return names
 
     # ---- Dragging ----------------------------------------------------------
     def _on_button_press(self, widget, event):
