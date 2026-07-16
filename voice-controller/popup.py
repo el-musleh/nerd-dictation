@@ -719,6 +719,12 @@ class PopupPanel(Gtk.Window):
         lbl_live.get_style_context().add_class("text-muted")
         live_box.pack_start(lbl_live, False, False, 2)
 
+        # Live streaming status line (updated from update_state)
+        self._live_status = Gtk.Label(label="● idle")
+        self._live_status.set_alignment(0.0, 0.5)
+        self._live_status.get_style_context().add_class("text-muted")
+        live_box.pack_start(self._live_status, False, False, 2)
+
         scrolled_live = Gtk.ScrolledWindow()
         self._live_text = Gtk.TextView()
         self._live_text.get_style_context().add_class("text-area")
@@ -727,6 +733,12 @@ class PopupPanel(Gtk.Window):
         self._live_text.set_wrap_mode(Gtk.WrapMode.WORD)
         scrolled_live.add(self._live_text)
         live_box.pack_start(scrolled_live, True, True, 4)
+
+        # partial/committed legend
+        legend = Gtk.Label(label="grey = interim · white = committed")
+        legend.set_alignment(0.0, 0.5)
+        legend.get_style_context().add_class("text-muted")
+        live_box.pack_start(legend, False, False, 2)
 
         self._nb.append_page(live_box, Gtk.Label(label="  Live  "))
 
@@ -1253,6 +1265,23 @@ class PopupPanel(Gtk.Window):
 
         return True
 
+    def _update_live_status(self, state, lang="", engine=""):
+        """Update the Live-tab status line from dictation state."""
+        if state == "DICTATING":
+            label = "● streaming"
+            if engine:
+                label += f" via {engine}"
+            if lang:
+                label += f" ({lang})"
+        elif state == "LOADING":
+            label = "◌ loading model…"
+        else:
+            label = "● idle"
+        try:
+            self._live_status.set_text(label)
+        except Exception:  # noqa: BLE001
+            pass
+
     def _on_log_status(self, is_loading):
         self._status_bar.set_loading(is_loading)
 
@@ -1289,8 +1318,9 @@ class PopupPanel(Gtk.Window):
         self._cur_state = state
         if engine:
             self._cur_engine = engine
-        
+
         GLib.idle_add(self._status_bar.update_state, state, lang, engine)
+        GLib.idle_add(self._update_live_status, state, lang, engine)
 
         if state == "DICTATING":
             GLib.idle_add(self._start_btn.set_sensitive, False)
