@@ -37,6 +37,7 @@ STATE_FILE = os.path.expanduser("~/.dictate-state")
 MODEL_BASE = os.path.expanduser("~/.config/nerd-dictation")
 DICTATE_START = os.path.join(STT_DIR, "dictate-start")
 DICTATE_STOP = os.path.join(STT_DIR, "dictate-stop")
+UNDO_LAST = os.path.join(STT_DIR, "undo_last.py")
 VOSK_MODELS_URL = "https://alphacephei.com/vosk/models"
 LOG_EN = "/tmp/nerd-dictation-en.log"
 LOG_AR = "/tmp/nerd-dictation-ar.log"
@@ -739,6 +740,14 @@ class PopupPanel(Gtk.Window):
         legend.set_alignment(0.0, 0.5)
         legend.get_style_context().add_class("text-muted")
         live_box.pack_start(legend, False, False, 2)
+
+        # Undo Last button (discoverable; same as tray menu item)
+        undo_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        btn_undo = Gtk.Button(label="↶  Undo Last")
+        btn_undo.get_style_context().add_class("btn-settings")
+        btn_undo.connect("clicked", lambda w: run_script(UNDO_LAST))
+        undo_row.pack_end(btn_undo, False, False, 4)
+        live_box.pack_start(undo_row, False, False, 2)
 
         self._nb.append_page(live_box, Gtk.Label(label="  Live  "))
 
