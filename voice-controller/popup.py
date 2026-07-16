@@ -1351,9 +1351,41 @@ class PopupPanel(Gtk.Window):
     def _on_log_status(self, is_loading):
         self._status_bar.set_loading(is_loading)
 
+    # ---- Geometry persistence ---------------------------------------------
+    def _save_geometry(self):
+        """Persist current size/position so the panel reopens where left."""
+        if self._cfg.get("PANEL_REMEMBER", "on") != "on":
+            return
+        try:
+            x, y = self.get_position()
+            w, h = self.get_size()
+            write_config_key("PANEL_X", str(int(x)))
+            write_config_key("PANEL_Y", str(int(y)))
+            write_config_key("PANEL_W", str(int(w)))
+            write_config_key("PANEL_H", str(int(h)))
+            write_config_key("PANEL_VISIBLE", "on" if self.get_visible() else "off")
+        except Exception as ex:  # noqa: BLE001
+            sys.stderr.write(f"[popup] save_geometry error: {ex}\n")
+
+    def _restore_geometry(self):
+        if self._cfg.get("PANEL_REMEMBER", "on") != "on":
+            return
+        try:
+            x = self._cfg.get("PANEL_X")
+            y = self._cfg.get("PANEL_Y")
+            w = self._cfg.get("PANEL_W")
+            h = self._cfg.get("PANEL_H")
+            if w and h:
+                self.resize(int(w), int(h))
+            if x is not None and y is not None:
+                self.move(int(x), int(y))
+        except Exception as ex:  # noqa: BLE001
+            sys.stderr.write(f"[popup] restore_geometry error: {ex}\n")
+
     # ---- Public API --------------------------------------------------------
     def show(self):
         self.show_all()
+        self._restore_geometry()
         # Front the Live transcript tab on every open (immediate feedback).
         try:
             self._nb.set_current_page(self._live_page_index)
@@ -1424,6 +1456,7 @@ class PopupPanel(Gtk.Window):
             self._history_session = []
 
     def destroy(self):
+        self._save_geometry()
         self._sampler.stop()
         self._tailer.stop()
         Gtk.Window.destroy(self)
