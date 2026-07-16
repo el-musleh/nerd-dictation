@@ -38,6 +38,7 @@ MODEL_BASE = os.path.expanduser("~/.config/nerd-dictation")
 DICTATE_START = os.path.join(STT_DIR, "dictate-start")
 DICTATE_STOP = os.path.join(STT_DIR, "dictate-stop")
 UNDO_LAST = os.path.join(STT_DIR, "undo_last.py")
+VALIDATE_SCRIPT = os.path.join(STT_DIR, "validate_config.sh")
 VOSK_MODELS_URL = "https://alphacephei.com/vosk/models"
 LOG_EN = "/tmp/nerd-dictation-en.log"
 LOG_AR = "/tmp/nerd-dictation-ar.log"
@@ -1194,13 +1195,50 @@ class PopupPanel(Gtk.Window):
 
         get_value(widget) -> str to store. signal is the GTK signal name
         ("changed", "value-changed", or "toggled").
+        After a successful write, re-validate the config and surface the
+        result inline (G8 validation reused).
         """
         def _on_change(*_args):
             try:
                 write_config_key(key, get_value(widget))
             except Exception as ex:  # noqa: BLE001
                 sys.stderr.write(f"[popup] bind {key} error: {ex}\n")
+            # Validate on every change so the user sees config problems live.
+            self._update_validation_label()
         widget.connect(signal, _on_change)
+
+    def _run_validate(self):
+        """Run validate_config.sh on the live config file.
+
+        Returns (ok: bool, errors: list[str]) parsed from [ERROR] lines.
+        """
+        try:
+            result = subprocess.run(
+                ["bash", VALIDATE_SCRIPT, CONFIG_FILE],
+                capture_output=True, text=True, timeout=5,
+            )
+        except Exception as ex:  # noqa: BLE001
+            return True, [f"validation could not run: {ex}"]
+        errors = []
+        for line in (result.stdout + result.stderr).splitlines():
+            if "[ERROR]" in line:
+                errors.append(line.split("[ERROR]", 1)[1].strip())
+        return (result.returncode == 0 and not errors), errors
+
+    def _update_validation_label(self):
+        if not hasattr(self, "_settings_status"):
+            return
+        try:
+            ok, errors = self._run_validate()
+        except Exception:  # noqa: BLE001
+            return
+        if ok:
+            self._settings_status.set_markup(
+                "<span foreground='#43e97b'>✓ config valid</span>")
+        else:
+            msg = " · ".join(errors[:3]) or "invalid config"
+            self._settings_status.set_markup(
+                f"<span foreground='#ff4b4b'>✗ {msg}</span>")
 
     def _copy_history(self, button):
         clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
