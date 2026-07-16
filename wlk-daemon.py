@@ -26,6 +26,8 @@ import json
 import os
 import signal
 import subprocess
+import threading
+import time
 
 WLK_VENV_PYTHON = "/home/steve/dev/stt/WhisperLiveKit/.venv/bin/python"
 WLK_SERVER_HOST = os.environ.get("WLK_HOST", "127.0.0.1")
@@ -33,6 +35,19 @@ WLK_SERVER_PORT = int(os.environ.get("WLK_PORT", "8000"))
 # Touch when the WLK server is confirmed up; removed on exit. dictate-start
 # watches this to decide whether to fall back to VOSK.
 WLK_READY_FILE = os.path.expanduser("~/.cache/nerd-dictation/wlk-ready")
+
+
+def _server_died():
+    """Server subprocess died unexpectedly: clear readiness and exit.
+
+    Removing the ready file prevents dictate-start (and future starts) from
+    trusting a stale "WLK is up" flag.
+    """
+    try:
+        os.remove(WLK_READY_FILE)
+    except Exception:
+        pass
+    os._exit(1)
 SAMPLE_RATE = 16000
 # Seconds per PCM chunk sent to the WLK server. Smaller = lower latency,
 # larger = less overhead. Tunable via WLK_CHUNK (0.1-0.5).
@@ -119,6 +134,20 @@ async def run(model: str, language: str) -> None:
     import websockets
 
     server = start_server(model, language)
+
+    # Liveness watchdog: if the WLK server subprocess dies mid-session (it is
+    # a child, not under our asyncio loop), remove the ready file and exit so
+    # dictate-start / a future start doesn't trust a stale "WLK is up" flag.
+    _stopping = threading.Event()
+
+    def _watchdog():
+        while not _stopping.is_set():
+            if server.poll() is not None:
+                _server_died()
+            time.sleep(1)
+
+    _wd = threading.Thread(target=_watchdog, daemon=True)
+    _wd.start()
     try:
         await wait_for_server()
         # Signal readiness so dictate-start knows WLK came up (no VOSK fallback).
@@ -213,6 +242,7 @@ async def run(model: str, language: str) -> None:
             except Exception:
                 recv_task.cancel()
     finally:
+        _stopping.set()
         try:
             server.terminate()
         except Exception:

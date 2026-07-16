@@ -42,3 +42,21 @@ def test_wlk_daemon_launch_smoke():
             proc.wait(timeout=10)
         except Exception:
             proc.kill()
+
+
+def test_server_died_clears_ready_file(monkeypatch, tmp_path):
+    # _server_died() must remove the ready file so a stale "WLK is up" flag
+    # is never trusted after the server dies.
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("wlk_daemon_mod", WLK_DAEMON)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    ready = tmp_path / "wlk-ready"
+    ready.write_text("")
+    monkeypatch.setattr(mod, "WLK_READY_FILE", str(ready))
+    # Prevent the real process exit during the test.
+    monkeypatch.setattr(os, "_exit", lambda *_a, **_k: None)
+    mod._server_died()
+    assert not ready.exists(), "ready file should be removed on server death"
+
